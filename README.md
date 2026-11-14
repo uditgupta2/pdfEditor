@@ -4,7 +4,7 @@ A responsive PDF viewer and **in-place text editor** component for React. It run
 entirely in the browser: files opened from the user's computer are never
 uploaded anywhere.
 
-> **Status: 0.0.x (early).** Viewing, opening files, and in-place text editing
+> **Status: 0.x (early).** Viewing, opening files, and in-place text editing
 > work. Images, shapes, signatures and page operations come next. The API may
 > change between minor versions until 1.0.
 
