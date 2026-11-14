@@ -39,17 +39,19 @@ function setup(ui: ReactNode, options?: ToolbarOption[], editor = fakeEditor()) 
 describe('formatting tools in toolbarOptions', () => {
   it('shows every formatting tool by default', () => {
     setup(<FormatBar />);
-    for (const name of ['Undo (Ctrl+Z)', 'Bold (Ctrl+B)', 'Italic (Ctrl+I)', 'Underline (Ctrl+U)', 'Text colour', 'Font', 'Align left', 'Delete text'])
+    for (const name of ['Undo (Ctrl+Z)', 'Bold (Ctrl+B)', 'Italic (Ctrl+I)', 'Underline (Ctrl+U)', 'Text colour', 'Align left', 'Delete text'])
       expect(screen.getByLabelText(name)).toBeTruthy();
     expect(screen.getByLabelText('Font size in points')).toBeTruthy();
+    // The font picker is not part of the first release.
+    expect(screen.queryByLabelText('Font')).toBeNull();
   });
 
   it('shows only the listed tools', () => {
-    setup(<FormatBar />, ['fontSelection', 'bold', 'alignment']);
-    expect(screen.getByLabelText('Font')).toBeTruthy();
+    setup(<FormatBar />, ['fontSize', 'bold', 'alignment']);
+    expect(screen.getByLabelText('Font size in points')).toBeTruthy();
     expect(screen.getByLabelText('Bold (Ctrl+B)')).toBeTruthy();
     expect(screen.getByLabelText('Align center')).toBeTruthy();
-    for (const name of ['Undo (Ctrl+Z)', 'Italic (Ctrl+I)', 'Underline (Ctrl+U)', 'Text colour', 'Delete text', 'Font size in points'])
+    for (const name of ['Undo (Ctrl+Z)', 'Italic (Ctrl+I)', 'Underline (Ctrl+U)', 'Text colour', 'Delete text'])
       expect(screen.queryByLabelText(name)).toBeNull();
     // dividers only between the three visible groups
     expect(document.querySelectorAll('.rpe-formatbar .rpe-divider').length).toBe(2);

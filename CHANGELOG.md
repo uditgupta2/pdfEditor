@@ -7,6 +7,27 @@ releases may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- When you save, download or export, and an edited page contains content the
+  editor can't read (for example a damaged or unusually compressed stream), a
+  dialog asks whether to **Keep** it unchanged, **Remove** it, or **Cancel** the
+  save. Previously that content was silently dropped from the saved page.
+- `onUnresolvedContent` option and prop to make that decision in code or with
+  your own UI, `exportPdf({ unresolvedContent: 'keep' | 'remove' })` to skip
+  the prompt, and an exported `UnresolvedContentDialog` for custom UIs.
+- `CANCELLED` error code. `exportPdf()` rejects with it when the user cancels
+  the prompt. The built-in Save and Download buttons and custom tools ignore it.
+- `repository`, `homepage` and `bugs` links in `package.json`.
+
+### Removed
+
+- The font picker (`'fontSelection'` toolbar option). Only Helvetica, Times and
+  Courier are available today, so edited text now keeps whichever is closest to
+  the original font. The picker will return when more fonts are supported. If
+  you list `'fontSelection'` in `toolbarOptions`, it is ignored, but TypeScript
+  will flag it.
+
 ### Fixed
 
 - Encrypted PDFs that open without a password no longer get a notice calling

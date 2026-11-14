@@ -5,3 +5,6 @@ coverage
 *.log
 *.tgz
 .DS_Store
+
+# Local test app (not published)
+sandbox

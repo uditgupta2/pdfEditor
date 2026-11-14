@@ -2,9 +2,9 @@
  * Everything that needs pdf-lib lives behind this module so it can be loaded
  * lazily (only once the user starts editing or exports).
  */
-import { PDFDict, PDFDocument, PDFName, PDFNumber, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
+import { PDFDict, PDFDocument, PDFName, PDFNumber, StandardFonts, rgb, type PDFFont, type PDFObject, type PDFPage } from 'pdf-lib';
 import { binaryToBytes, fmtNum, type Operand, type Operation } from './contentStream';
-import { analyzePage, type PageAnalysis, type TextRun } from './extract';
+import { analyzePage, contentRefs, UNRESOLVED_MARKER_RE, type PageAnalysis, type TextRun } from './extract';
 import { layoutFrame } from './layout';
 import { standardFontName, toEncodable } from './metrics';
 import type { DocumentEdits, PageEdits, TextFrame } from './model';
@@ -102,11 +102,48 @@ function rewriteShow(op: Operation, removed: Map<number, TextRun>): string {
   return tj;
 }
 
-function setPageContent(doc: PDFDocument, page: PDFPage, content: string) {
-  // Wrap in q/Q so whatever state the original leaves behind cannot affect
-  // text we add afterwards.
-  const stream = doc.context.flateStream(binaryToBytes(`q\n${content}\nQ\n`));
-  page.node.set(PDFName.of('Contents'), doc.context.register(stream));
+/**
+ * What to do with content streams the editor could not decode when a page is
+ * rewritten: `'keep'` puts the original streams back untouched, in their
+ * original position; `'remove'` leaves them out of the saved page.
+ */
+export type UnresolvedPolicy = 'keep' | 'remove';
+
+/**
+ * Replace the page's content with `content` (as produced by `removeRuns`).
+ * Undecodable streams appear in it as marker comments; with `'keep'` each
+ * marker becomes the page's original stream at that position.
+ */
+export function setPageContent(doc: PDFDocument, page: PDFPage, content: string, policy: UnresolvedPolicy = 'keep') {
+  const original = contentRefs(page);
+  // Alternating: decoded text, original stream, decoded text, ... text.
+  const texts: string[] = [];
+  const kept: PDFObject[] = [];
+  let pending = '';
+  let cursor = 0;
+  for (const m of content.matchAll(UNRESOLVED_MARKER_RE)) {
+    pending += content.slice(cursor, m.index);
+    cursor = m.index! + m[0].length;
+    const ref = original[Number(m[1])];
+    if (policy === 'keep' && ref) {
+      texts.push(pending);
+      kept.push(ref);
+      pending = '';
+    } else {
+      pending += '\n'; // 'remove': the marker comment is dropped
+    }
+  }
+  texts.push(pending + content.slice(cursor));
+
+  // Wrap the whole page in q/Q so whatever state the original leaves behind
+  // cannot affect text we add afterwards.
+  const entries: PDFObject[] = [];
+  texts.forEach((text, i) => {
+    const body = `${i === 0 ? 'q\n' : ''}${text}${i === texts.length - 1 ? '\nQ\n' : ''}`;
+    entries.push(doc.context.register(doc.context.flateStream(binaryToBytes(body))));
+    if (i < kept.length) entries.push(kept[i]!);
+  });
+  page.node.set(PDFName.of('Contents'), entries.length === 1 ? entries[0]! : doc.context.obj(entries));
 }
 
 type FontCache = Map<string, PDFFont>;
@@ -150,22 +187,34 @@ export async function drawFrame(doc: PDFDocument, page: PDFPage, frame: TextFram
   }
 }
 
-export async function applyPageEdits(doc: PDFDocument, page: PDFPage, pageIndex: number, edits: PageEdits, warn: DrawWarnings) {
+export async function applyPageEdits(
+  doc: PDFDocument,
+  page: PDFPage,
+  pageIndex: number,
+  edits: PageEdits,
+  warn: DrawWarnings,
+  policy: UnresolvedPolicy = 'keep',
+) {
   if (edits.removedRuns.length) {
     const analysis = analyzePage(page, pageIndex);
-    setPageContent(doc, page, removeRuns(analysis, new Set(edits.removedRuns)));
+    setPageContent(doc, page, removeRuns(analysis, new Set(edits.removedRuns)), policy);
   }
   const cache: FontCache = new Map();
   for (const frame of edits.frames) await drawFrame(doc, page, frame, cache, warn);
 }
 
-export async function exportEdited(bytes: Uint8Array, edits: DocumentEdits) {
+export interface ExportOptions {
+  /** What to do with undecodable content streams on rewritten pages. Default `'keep'`. */
+  unresolved?: UnresolvedPolicy;
+}
+
+export async function exportEdited(bytes: Uint8Array, edits: DocumentEdits, options: ExportOptions = {}) {
   const doc = await loadForEditing(bytes);
   const warn: DrawWarnings = { substituted: new Set() };
   const pages = doc.getPages();
   for (const [key, pageEdits] of Object.entries(edits)) {
     const page = pages[Number(key)];
-    if (page) await applyPageEdits(doc, page, Number(key), pageEdits, warn);
+    if (page) await applyPageEdits(doc, page, Number(key), pageEdits, warn, options.unresolved);
   }
   const out = await doc.save({ useObjectStreams: true });
   return { bytes: out, substituted: [...warn.substituted] };
@@ -179,6 +228,7 @@ export async function buildPageWithoutRuns(source: PDFDocument, index: number, a
   const doc = await PDFDocument.create({ updateMetadata: false });
   const [copy] = await doc.copyPages(source, [index]);
   doc.addPage(copy);
-  setPageContent(doc, copy!, removeRuns(analysis, new Set(removed)));
+  // The preview always keeps undecodable streams, so it matches the viewer.
+  setPageContent(doc, copy!, removeRuns(analysis, new Set(removed)), 'keep');
   return doc.save({ useObjectStreams: false });
 }

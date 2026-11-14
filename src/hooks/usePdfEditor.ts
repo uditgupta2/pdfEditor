@@ -22,6 +22,31 @@ export interface PasswordRequest {
   cancel(): void;
 }
 
+/** What to do with page content the editor could not read, when a page is rewritten. */
+export type UnresolvedContentChoice = 'keep' | 'remove';
+
+export interface UnresolvedContentInfo {
+  fileName: string;
+  /** One-based numbers of the edited pages that contain unreadable content. */
+  pages: number[];
+  /** Total number of unreadable content streams on those pages. */
+  streams: number;
+}
+
+export interface UnresolvedContentRequest extends UnresolvedContentInfo {
+  choose(choice: UnresolvedContentChoice): void;
+  cancel(): void;
+}
+
+export interface ExportOptions {
+  /**
+   * What to do with page content the editor could not read, on pages whose
+   * text was edited. When omitted, the user is asked (`onUnresolvedContent`
+   * or the built-in dialog).
+   */
+  unresolvedContent?: UnresolvedContentChoice;
+}
+
 export interface UsePdfEditorOptions extends PdfjsOptions {
   /** Max accepted file size in bytes. Default 100 MB. `0` disables the limit. */
   maxFileSize?: number;
@@ -34,6 +59,15 @@ export interface UsePdfEditorOptions extends PdfjsOptions {
    * When omitted, the built-in password dialog is used.
    */
   onPasswordRequest?(info: { reason: PasswordReason; fileName: string }): Promise<string | null> | string | null;
+  /**
+   * Called on save, download or export when an edited page contains content the
+   * editor could not read (e.g. a damaged or unusually compressed stream).
+   * Return `'keep'` to save that content unchanged, `'remove'` to leave it out,
+   * or `null` to cancel the save. When omitted, the built-in dialog asks the user.
+   */
+  onUnresolvedContent?(
+    info: UnresolvedContentInfo,
+  ): Promise<UnresolvedContentChoice | null> | UnresolvedContentChoice | null;
 }
 
 export type EditorStatus = 'empty' | 'loading' | 'ready';
@@ -77,6 +111,7 @@ interface State {
   error: PdfEditorError | null;
   notice: string | null;
   passwordRequest: PasswordRequest | null;
+  unresolvedRequest: UnresolvedContentRequest | null;
   scrollRequest: { page: number; nonce: number } | null;
   mode: EditorMode;
   edits: DocumentEdits;
@@ -103,6 +138,7 @@ type Action =
   | { type: 'notice'; notice: string | null }
   | { type: 'close' }
   | { type: 'password'; request: PasswordRequest | null }
+  | { type: 'unresolved'; request: UnresolvedContentRequest | null }
   | { type: 'zoom'; zoom: ZoomValue }
   | { type: 'scale'; scale: number }
   | { type: 'currentPage'; page: number }
@@ -136,6 +172,7 @@ function initialState(zoom: ZoomValue): State {
     error: null,
     notice: null,
     passwordRequest: null,
+    unresolvedRequest: null,
     scrollRequest: null,
     mode: 'view',
     edits: EMPTY_EDITS,
@@ -166,6 +203,7 @@ function reducer(state: State, action: Action): State {
         error: null,
         notice: null,
         passwordRequest: null,
+        unresolvedRequest: null,
         scrollRequest: null,
         edits: EMPTY_EDITS,
         savedEdits: EMPTY_EDITS,
@@ -190,6 +228,8 @@ function reducer(state: State, action: Action): State {
       return { ...initialState(state.zoom), documentKey: state.documentKey + 1 };
     case 'password':
       return { ...state, passwordRequest: action.request };
+    case 'unresolved':
+      return { ...state, unresolvedRequest: action.request };
     case 'zoom':
       return { ...state, zoom: action.zoom };
     case 'scale':
@@ -337,6 +377,8 @@ export interface PdfEditorController {
   /** Non-error information for the user (e.g. export warnings). */
   notice: string | null;
   passwordRequest: PasswordRequest | null;
+  /** Set while the built-in dialog asks what to do with unreadable page content. */
+  unresolvedRequest: UnresolvedContentRequest | null;
   scrollRequest: { page: number; nonce: number } | null;
 
   // ---- editing ----
@@ -377,8 +419,11 @@ export interface PdfEditorController {
   deleteActive(): void;
   undo(): void;
   redo(): void;
-  /** The PDF with all edits applied. */
-  exportPdf(): Promise<Uint8Array>;
+  /**
+   * The PDF with all edits applied. Rejects with a `CANCELLED` error if the
+   * user cancels the unreadable-content prompt.
+   */
+  exportPdf(options?: ExportOptions): Promise<Uint8Array>;
   /** Save the current document (with edits) to the user's computer. */
   download(fileName?: string): Promise<void>;
   /**
@@ -514,6 +559,7 @@ export function usePdfEditor(options: UsePdfEditorOptions = {}): PdfEditorContro
   const clearError = useCallback(() => dispatch({ type: 'clearError' }), []);
   const showNotice = useCallback((notice: string | null) => dispatch({ type: 'notice', notice }), []);
   const reportError = useCallback((e: unknown, context?: string) => {
+    if (isPdfEditorError(e) && e.code === 'CANCELLED') return; // the user chose to stop
     const msg = (e as Error)?.message ?? String(e);
     const error = isPdfEditorError(e) ? e : new PdfEditorError('LOAD_FAILED', context ? `${context}: ${msg}` : msg, e);
     dispatch({ type: 'failed', error });
@@ -577,7 +623,23 @@ export function usePdfEditor(options: UsePdfEditorOptions = {}): PdfEditorContro
   const undo = useCallback(() => dispatch({ type: 'undo' }), []);
   const redo = useCallback(() => dispatch({ type: 'redo' }), []);
 
-  const exportPdf = useCallback(async (): Promise<Uint8Array> => {
+  /** Ask (via `onUnresolvedContent` or the built-in dialog) what to do with unreadable content. */
+  const askUnresolved = useCallback((info: UnresolvedContentInfo) => {
+    const custom = optionsRef.current.onUnresolvedContent;
+    if (custom) return Promise.resolve(custom(info));
+    return new Promise<UnresolvedContentChoice | null>((resolve) => {
+      const done = (choice: UnresolvedContentChoice | null) => {
+        dispatch({ type: 'unresolved', request: null });
+        resolve(choice);
+      };
+      dispatch({
+        type: 'unresolved',
+        request: { ...info, choose: (c) => done(c), cancel: () => done(null) },
+      });
+    });
+  }, []);
+
+  const exportPdf = useCallback(async (options: ExportOptions = {}): Promise<Uint8Array> => {
     const s = stateRef.current;
     if (!s.bytes) throw new PdfEditorError('LOAD_FAILED', 'No document is open.');
     // Include the frame that is still open in the editor.
@@ -588,7 +650,23 @@ export function usePdfEditor(options: UsePdfEditorOptions = {}): PdfEditorContro
       endEdit();
     }
     if (!hasEdits(edits) || !session) return s.bytes;
-    const { bytes, substituted } = await session.export(edits);
+
+    // Rewriting an edited page must not silently drop content we couldn't read.
+    let unresolved = options.unresolvedContent;
+    if (!unresolved) {
+      const found = await session.unresolvedContent(edits);
+      if (found.length) {
+        const choice = await askUnresolved({
+          fileName: s.fileName ?? 'document.pdf',
+          pages: found.map((f) => f.page + 1),
+          streams: found.reduce((n, f) => n + f.streams, 0),
+        });
+        if (!choice) throw new PdfEditorError('CANCELLED', 'Saving was cancelled.');
+        unresolved = choice;
+      }
+    }
+
+    const { bytes, substituted } = await session.export(edits, { unresolved });
     if (substituted.length) {
       dispatch({
         type: 'notice',
@@ -596,7 +674,7 @@ export function usePdfEditor(options: UsePdfEditorOptions = {}): PdfEditorContro
       });
     }
     return bytes;
-  }, [endEdit, session]);
+  }, [endEdit, session, askUnresolved]);
 
   /** Export, run `handler`, then mark exactly the exported edits as saved. */
   const runSave = useCallback(
@@ -618,6 +696,7 @@ export function usePdfEditor(options: UsePdfEditorOptions = {}): PdfEditorContro
         dispatch({ type: 'markSaved' });
         return true;
       } catch (e) {
+        if (isPdfEditorError(e) && e.code === 'CANCELLED') return false;
         const error = new PdfEditorError('LOAD_FAILED', `${failMessage}: ${(e as Error)?.message ?? e}`, e);
         dispatch({ type: 'failed', error });
         optionsRef.current.onError?.(error);

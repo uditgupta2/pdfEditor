@@ -18,6 +18,7 @@ import { EditorProvider } from './context';
 import { IconAlert, IconClose, IconInfo, IconUpload } from './icons';
 import { FormatBar } from './FormatBar';
 import { PasswordDialog } from './PasswordDialog';
+import { UnresolvedContentDialog } from './UnresolvedContentDialog';
 import { PdfDropzone } from './PdfDropzone';
 import { PdfViewer } from './PdfViewer';
 import { ThumbnailSidebar } from './ThumbnailSidebar';
@@ -59,7 +60,7 @@ export interface PdfEditorProps extends UsePdfEditorOptions {
   /**
    * Which tools to show. Default: all. Main toolbar:
    * 'sidebar' | 'open' | 'fileName' | 'pageNav' | 'zoom' | 'edit' | 'download' | 'save'.
-   * Formatting bar (Edit mode): 'undo' | 'redo' | 'fontSelection' | 'fontSize' | 'bold' |
+   * Formatting bar (Edit mode): 'undo' | 'redo' | 'fontSize' | 'bold' |
    * 'italic' | 'underline' | 'textColor' | 'alignment' | 'deleteText'.
    * Tools always appear in this order. Hidden formatting tools also lose their
    * keyboard shortcut. `[]` hides the toolbar (custom tools still show).
@@ -364,6 +365,7 @@ export function PdfEditor(props: PdfEditorProps) {
         )}
 
         {editor.passwordRequest && <PasswordDialog request={editor.passwordRequest} />}
+        {editor.unresolvedRequest && <UnresolvedContentDialog request={editor.unresolvedRequest} />}
       </div>
       </ToolbarConfigProvider>
     </EditorProvider>

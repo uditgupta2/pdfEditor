@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
-import { hexColor, parseCssColor, type Align, type FamilyClass } from '../edit/model';
+import { hexColor, parseCssColor, type Align } from '../edit/model';
 import { useEditor } from './context';
 import { KEEP_EDITING_ATTR } from './InlineEditor';
 import { useToolbarConfig, type FormatToolOption } from './toolbarConfig';
@@ -212,26 +212,9 @@ export function FormatBar() {
         </Btn>,
       ),
     ],
-    [
-      tool(
-        'fontSelection',
-        <select
-          className="rpe-input rpe-font-select"
-          aria-label="Font"
-          disabled={!on}
-          value={frame?.family ?? 'sans'}
-          onChange={(e) => {
-            updateActiveFrame({ family: e.target.value as FamilyClass });
-            inlineEditorRef.current?.focus();
-          }}
-        >
-          <option value="sans">Sans (Helvetica)</option>
-          <option value="serif">Serif (Times)</option>
-          <option value="mono">Mono (Courier)</option>
-        </select>,
-      ),
-      tool('fontSize', <FontSizeStepper size={frame?.size} disabled={!on} onChange={setSize} />),
-    ],
+    // No font picker yet: edited text keeps the closest standard font to the
+    // original (sans, serif or mono) until custom fonts are supported.
+    [tool('fontSize', <FontSizeStepper size={frame?.size} disabled={!on} onChange={setSize} />)],
     [
       tool(
         'bold',

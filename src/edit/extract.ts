@@ -1,4 +1,4 @@
-import { PDFDict, PDFName, type PDFContext, type PDFPage } from 'pdf-lib';
+import { PDFDict, PDFName, type PDFContext, type PDFObject, type PDFPage } from 'pdf-lib';
 import { parseContentStream, type Operand, type Operation } from './contentStream';
 import { loadFontInfo, resolve, streamText, type FontInfo, type FontStyle } from './fonts';
 
@@ -111,7 +111,17 @@ export interface PageAnalysis {
   /** Concatenated, decoded content stream (binary string). */
   content: string;
   ops: Operation[];
+  /**
+   * Positions (in the page's /Contents list) of streams that could not be
+   * decoded. Each sits in `content` as an `unresolvedMarker(position)` comment,
+   * so rewriting the page can put the original stream back in the same place.
+   */
+  unresolved: number[];
 }
+
+/** PDF comment line standing in for an undecodable content stream. */
+export const unresolvedMarker = (position: number) => `\n%rpe-unresolved:${position}\n`;
+export const UNRESOLVED_MARKER_RE = /\n%rpe-unresolved:(\d+)\n/g;
 
 interface GState {
   ctm: Matrix;
@@ -143,20 +153,33 @@ function colorFrom(ops: Operand[], op: string): RGB | null {
   return null;
 }
 
-/** Read the page's content streams as one decoded binary string. */
-export function readPageContent(page: PDFPage): string {
-  const context = page.doc.context;
+/** The page's /Contents entries, in order. */
+export function contentRefs(page: PDFPage): PDFObject[] {
   const contents = page.node.Contents();
-  if (!contents) return '';
+  if (!contents) return [];
+  return 'asArray' in contents && typeof (contents as { asArray?: unknown }).asArray === 'function'
+    ? (contents as unknown as { asArray(): PDFObject[] }).asArray()
+    : [contents as unknown as PDFObject];
+}
+
+/**
+ * Read the page's content streams as one decoded binary string. A stream that
+ * can't be decoded is replaced by a marker comment (see `unresolvedMarker`)
+ * and its position is listed in `unresolved`.
+ */
+export function readPageContent(page: PDFPage): { content: string; unresolved: number[] } {
+  const context = page.doc.context;
   const parts: string[] = [];
-  const list = 'asArray' in contents && typeof (contents as { asArray?: unknown }).asArray === 'function'
-    ? (contents as unknown as { asArray(): unknown[] }).asArray()
-    : [contents];
-  for (const ref of list) {
+  const unresolved: number[] = [];
+  contentRefs(page).forEach((ref, position) => {
     const text = streamTextSafe(context, ref as Parameters<typeof streamText>[1]);
     if (text != null) parts.push(text);
-  }
-  return parts.join('\n');
+    else {
+      unresolved.push(position);
+      parts.push(unresolvedMarker(position));
+    }
+  });
+  return { content: parts.join('\n'), unresolved };
 }
 
 function streamTextSafe(context: PDFContext, obj: Parameters<typeof streamText>[1]) {
@@ -169,7 +192,7 @@ function streamTextSafe(context: PDFContext, obj: Parameters<typeof streamText>[
 
 export function analyzePage(page: PDFPage, pageIndex: number): PageAnalysis {
   const context = page.doc.context;
-  const content = readPageContent(page);
+  const { content, unresolved } = readPageContent(page);
   const ops = parseContentStream(content);
 
   const resources = page.node.Resources();
@@ -426,7 +449,7 @@ export function analyzePage(page: PDFPage, pageIndex: number): PageAnalysis {
   });
 
   const blocks = groupBlocks(runs.filter((r) => r.text.trim().length > 0 || r.text.length > 0), graphics, pageIndex);
-  return { runs, graphics, blocks, content, ops };
+  return { runs, graphics, blocks, content, ops, unresolved };
 }
 
 // ---------------------------------------------------------------------------

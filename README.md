@@ -138,6 +138,7 @@ To open a file yourself, pass `file`. It accepts a `File`, `Blob`,
 | `onFileLoad` | `({ name, size, pageCount }) => void` | none | Called after a document opens |
 | `onError` | `(error: PdfEditorError) => void` | none | See [error codes](#error-codes) |
 | `onPasswordRequest` | `({ reason, fileName }) => string \| null \| Promise<…>` | built-in dialog | Supply a password for encrypted files; return `null` to cancel |
+| `onUnresolvedContent` | `({ fileName, pages, streams }) => 'keep' \| 'remove' \| null \| Promise<…>` | built-in dialog | Decide what happens to content the editor can't read on edited pages; return `null` to cancel the save. See [Unreadable content](#unreadable-content) |
 | `toolbarExtras` | `ReactNode` | none | Extra content rendered in the toolbar |
 | `emptyState` | `ReactNode` | none | Replaces the upload screen shown when no file is open |
 
@@ -154,6 +155,7 @@ To open a file yourself, pass `file`. It accepts a `File`, `Blob`,
 | `UNSUPPORTED_INPUT` | `file` isn't a supported type |
 | `FETCH_FAILED` | A URL couldn't be downloaded |
 | `LOAD_FAILED` | Any other loading failure |
+| `CANCELLED` | The user cancelled a save from a prompt. `exportPdf()` rejects with it; the built-in Save, Download and custom tools ignore it quietly |
 
 If a new file fails to open, the current document stays open and an error
 banner appears. Use `isPdfEditorError(err)` to narrow unknown errors.
@@ -167,7 +169,7 @@ banner appears. Use `isPdfEditorError(err)` to narrow unknown errors.
 | Bar | Names |
 |---|---|
 | Main toolbar | `'sidebar'`, `'open'`, `'fileName'`, `'pageNav'`, `'zoom'`, `'edit'`, `'download'`, `'save'` |
-| Formatting bar (Edit mode) | `'undo'`, `'redo'`, `'fontSelection'`, `'fontSize'`, `'bold'`, `'italic'`, `'underline'`, `'textColor'`, `'alignment'`, `'deleteText'` |
+| Formatting bar (Edit mode) | `'undo'`, `'redo'`, `'fontSize'`, `'bold'`, `'italic'`, `'underline'`, `'textColor'`, `'alignment'`, `'deleteText'` |
 
 ```tsx
 // Simple editing: size, bold and italic only
@@ -222,7 +224,7 @@ Click **Edit** in the toolbar, then:
 
 - **Click any paragraph** to edit it in place, like a word processor. Text rewraps as you type, Enter starts a new paragraph, and Ctrl/⌘+B / I / U work.
 - **Click an empty spot** to add new text there.
-- Use the formatting bar for font (sans, serif or mono), size, bold, italic, underline, colour and alignment (left, centre, right or justify).
+- Use the formatting bar for size, bold, italic, underline, colour and alignment (left, centre, right or justify).
 - Drag the handle above the box to move it, and the side handle to change its width.
 - **Undo/redo:** Ctrl/⌘+Z and Ctrl/⌘+Shift+Z.
 - Inside the box, Escape cancels and Ctrl/⌘+Enter or clicking elsewhere confirms.
@@ -244,7 +246,7 @@ re-rendered without it.
 
 ### Current limitations
 
-- **Fonts:** edited paragraphs are set in Helvetica, Times or Courier (closest match), not the document's original font. Characters outside Western European (WinAnsi) are substituted on export, and you'll see a notice when that happens.
+- **Fonts:** edited paragraphs are set in Helvetica, Times or Courier, whichever is closest to the original, not the document's own font. There is no font picker yet; it will return once more fonts are supported. Characters outside Western European (WinAnsi) are substituted on export, and you'll see a notice when that happens.
 - **Not editable yet:**
   - text inside form XObjects
   - Type3 fonts
@@ -257,6 +259,36 @@ re-rendered without it.
 - **Restricted PDFs:** these stay view-only by design. See [Restricted PDFs](#restricted-pdfs).
 - **Paragraph size:** a paragraph grows downwards. It doesn't push content below it, because PDFs have no document flow.
 - **Scanned pages:** these have no text to edit. OCR-based editing is planned.
+
+### Unreadable content
+
+To change a paragraph, the editor rewrites that page's content. Occasionally a
+page contains a content stream it can't decode, for example because the stream
+is damaged or uses a format the editor doesn't support. That content still
+displays in the viewer, but the editor can't read it.
+
+The editor never drops it silently. When you save or download, and an edited
+page contains such content, a dialog lists the pages and offers three choices:
+
+- **Keep** (default) saves that content exactly as it was, in its original place.
+- **Remove** leaves it out of the saved file, so anything it draws on the page disappears.
+- **Cancel** stops the save.
+
+Pages where you only added new text aren't affected, because their original
+content is left untouched.
+
+To decide in code, or show your own UI, pass `onUnresolvedContent`, or pass the
+choice straight to `exportPdf`:
+
+```tsx
+<PdfEditor onUnresolvedContent={({ pages }) => (confirm(`Keep unreadable content on pages ${pages.join(', ')}?`) ? 'keep' : 'remove')} />
+
+const bytes = await editor.exportPdf({ unresolvedContent: 'keep' });
+```
+
+If you build your own UI with `usePdfEditor`, render
+`<UnresolvedContentDialog request={editor.unresolvedRequest} />` while
+`editor.unresolvedRequest` is set, or pass `onUnresolvedContent`.
 
 ### Restricted PDFs
 
@@ -335,14 +367,14 @@ The controller returned by `usePdfEditor` exposes:
 | Group | Members |
 |---|---|
 | Document state | `status`, `fileName`, `fileSize`, `pageCount`, `pageSizes`, `currentPage`, `zoom`, `scale`, `error`, `notice` |
-| Editing state | `mode`, `edits`, `isDirty`, `canUndo`, `canRedo`, `activeEdit`, `saving`, `session` (`null` until a document is open; `session.editability()` checks whether it can be edited) |
+| Editing state | `mode`, `edits`, `isDirty`, `canUndo`, `canRedo`, `activeEdit`, `saving`, `unresolvedRequest`, `session` (`null` until a document is open; `session.editability()` checks whether it can be edited) |
 | Navigation | `load(input)`, `close()`, `goToPage(index)`, `setZoom(zoom)`, `zoomIn()`, `zoomOut()` |
 | Editing | `setMode(mode)`, `endEdit({ discard? })`, `deleteActive()`, `undo()`, `redo()` |
-| Output | `exportPdf()` → `Promise<Uint8Array>`, `download(fileName?)`, `save(handler)`, `markSaved()` |
+| Output | `exportPdf({ unresolvedContent? })` → `Promise<Uint8Array>`, `download(fileName?)`, `save(handler)`, `markSaved()` |
 | Messages | `showNotice(message)`, `clearError()`, `reportError(error, context?)` |
 
 Other exports: `Toolbar`, `FormatBar`, `ThumbnailSidebar`, `PdfPage`,
-`TextEditLayer`, `PasswordDialog`, `PdfLoader`, `useEditor`, `useDropTarget`,
+`TextEditLayer`, `PasswordDialog`, `UnresolvedContentDialog`, `PdfLoader`, `useEditor`, `useDropTarget`,
 `pickFiles`, plus helpers such as `normalizePdfInput`, `hasPdfHeader` and
 `formatBytes`. All types are exported too.
 

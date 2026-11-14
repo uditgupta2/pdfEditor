@@ -779,9 +779,6 @@
 .rpe-formatbar-scroll > * {
   flex-shrink: 0;
 }
-.rpe-font-select {
-  width: 150px;
-}
 .rpe-stepper {
   display: inline-flex;
   align-items: stretch;
@@ -882,9 +879,6 @@
   cursor: inherit;
 }
 @container rpe (max-width: 640px) {
-  .rpe-font-select {
-    width: 112px;
-  }
   .rpe-formatbar-hint {
     font-size: 12px;
   }

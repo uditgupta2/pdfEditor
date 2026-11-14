@@ -6,6 +6,14 @@ import type { DocumentEdits } from './model';
 
 type Engine = typeof import('./engine');
 
+/** A page with content the editor could not read (see `EditSession.unresolvedContent`). */
+export interface UnresolvedPage {
+  /** Zero-based page index. */
+  page: number;
+  /** Number of content streams on that page that could not be decoded. */
+  streams: number;
+}
+
 /** Must match the label in `forbiddenActions`. A value import would pull pdf-lib into the main bundle. */
 const CHANGING_CONTENT = 'changing its content';
 
@@ -101,12 +109,26 @@ export class EditSession {
     return (await docP).getPage(1);
   }
 
-  async export(edits: DocumentEdits) {
+  /**
+   * Pages that will be rewritten on export (they have removed text) and contain
+   * content streams the editor could not decode. Zero-based page indexes.
+   */
+  async unresolvedContent(edits: DocumentEdits): Promise<UnresolvedPage[]> {
+    const out: UnresolvedPage[] = [];
+    for (const [key, page] of Object.entries(edits)) {
+      if (!page.removedRuns.length) continue;
+      const { unresolved } = await this.analyze(Number(key));
+      if (unresolved.length) out.push({ page: Number(key), streams: unresolved.length });
+    }
+    return out.sort((a, b) => a.page - b.page);
+  }
+
+  async export(edits: DocumentEdits, options: { unresolved?: 'keep' | 'remove' } = {}) {
     // Headless callers can reach this without going through the edit-mode check.
     const check = await this.editability();
     if (!check.ok) throw new Error(check.reason);
     const engine = await this.engine();
-    return engine.exportEdited(this.bytes, edits);
+    return engine.exportEdited(this.bytes, edits, options);
   }
 
   destroy() {

@@ -15,6 +15,14 @@
     "text-editing"
   ],
   "author": "Udit Gupta",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uditgupta2/pdfEditor.git"
+  },
+  "homepage": "https://github.com/uditgupta2/pdfEditor#readme",
+  "bugs": {
+    "url": "https://github.com/uditgupta2/pdfEditor/issues"
+  },
   "license": "MIT",
   "type": "module",
   "sideEffects": [

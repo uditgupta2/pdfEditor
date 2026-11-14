@@ -18,6 +18,7 @@ export { PdfLoader, type PdfLoaderProps } from './components/PdfLoader';
 export { ThumbnailSidebar, type ThumbnailSidebarProps } from './components/ThumbnailSidebar';
 export { PdfDropzone, type PdfDropzoneProps } from './components/PdfDropzone';
 export { PasswordDialog } from './components/PasswordDialog';
+export { UnresolvedContentDialog } from './components/UnresolvedContentDialog';
 export { EditorProvider, useEditor } from './components/context';
 export { FormatBar } from './components/FormatBar';
 export { TextEditLayer, type TextEditLayerProps } from './components/TextEditLayer';
@@ -34,6 +35,10 @@ export {
   type EditorMode,
   type ActiveEdit,
   type SaveInfo,
+  type ExportOptions,
+  type UnresolvedContentChoice,
+  type UnresolvedContentInfo,
+  type UnresolvedContentRequest,
 } from './hooks/usePdfEditor';
 export type {
   TextFrame,

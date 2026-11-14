@@ -285,3 +285,77 @@ describe('drawn underlines', () => {
     expect(old).toHaveLength(0);
   });
 });
+
+describe('content the editor cannot decode', () => {
+  // Page with three content streams; the middle one uses a filter pdf-lib
+  // can't decode, so the editor can't read it.
+  async function withUnreadableStream() {
+    const { PDFName } = await import('pdf-lib');
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([300, 200]);
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    const key = page.node.newFontDictionary('F1', font.ref).decodeText();
+    const ctx = doc.context;
+    const readable1 = ctx.register(ctx.stream(`BT /${key} 12 Tf 20 150 Td (Hello ) Tj (World) Tj ET`));
+    const unreadable = ctx.register(ctx.stream('0 0 1 rg 10 10 50 50 re f', { Filter: 'JBIG2Decode' }));
+    const readable2 = ctx.register(ctx.stream(`BT /${key} 12 Tf 20 100 Td (After) Tj ET`));
+    page.node.set(PDFName.of('Contents'), ctx.obj([readable1, unreadable, readable2]));
+    return doc.save();
+  }
+
+  async function contentFilters(bytes: Uint8Array) {
+    const { PDFName, PDFRawStream } = await import('pdf-lib');
+    const doc = await PDFDocument.load(bytes);
+    const contents = doc.getPage(0).node.Contents()!;
+    const list = 'asArray' in contents ? contents.asArray() : [contents];
+    return list.map((ref) => {
+      const s = doc.context.lookup(ref);
+      return s instanceof PDFRawStream ? String(s.dict.get(PDFName.of('Filter'))) : '?';
+    });
+  }
+
+  async function removeHello(bytes: Uint8Array) {
+    const doc = await PDFDocument.load(bytes);
+    const a = analyzePage(doc.getPage(0), 0);
+    return a.runs.find((r) => r.text === 'Hello ')!.id;
+  }
+
+  it('marks the unreadable stream instead of silently dropping it', async () => {
+    const doc = await PDFDocument.load(await withUnreadableStream());
+    const a = analyzePage(doc.getPage(0), 0);
+    expect(a.unresolved).toEqual([1]);
+    expect(a.runs.map((r) => r.text)).toEqual(expect.arrayContaining(['Hello ', 'World', 'After']));
+  });
+
+  it("'keep' saves the unreadable stream unchanged, in its original position", async () => {
+    const bytes = await withUnreadableStream();
+    const id = await removeHello(bytes);
+    const { bytes: out } = await exportEdited(bytes, { 0: { removedRuns: [id], frames: [] } }, { unresolved: 'keep' });
+    const filters = await contentFilters(out);
+    expect(filters).toHaveLength(3);
+    expect(filters[1]).toBe('/JBIG2Decode');
+    const text = (await pdfjsText(out)).map((t) => t.str).join(' ');
+    expect(text).not.toContain('Hello');
+    expect(text).toContain('World');
+    expect(text).toContain('After');
+  });
+
+  it("'remove' leaves the unreadable stream out", async () => {
+    const bytes = await withUnreadableStream();
+    const id = await removeHello(bytes);
+    const { bytes: out } = await exportEdited(bytes, { 0: { removedRuns: [id], frames: [] } }, { unresolved: 'remove' });
+    expect(await contentFilters(out)).not.toContain('/JBIG2Decode');
+    const text = (await pdfjsText(out)).map((t) => t.str).join(' ');
+    expect(text).toContain('World');
+    expect(text).toContain('After');
+  });
+
+  it('the session reports only edited pages whose content will be rewritten', async () => {
+    const bytes = await withUnreadableStream();
+    const id = await removeHello(bytes);
+    const session = new EditSession(bytes);
+    expect(await session.unresolvedContent({ 0: { removedRuns: [id], frames: [] } })).toEqual([{ page: 0, streams: 1 }]);
+    // Only adding text doesn't rewrite the original content, so there's nothing to ask.
+    expect(await session.unresolvedContent({ 0: { removedRuns: [], frames: [] } })).toEqual([]);
+  });
+});

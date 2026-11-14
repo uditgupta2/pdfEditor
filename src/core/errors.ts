@@ -12,7 +12,9 @@ export type PdfEditorErrorCode =
   /** A URL could not be fetched. */
   | 'FETCH_FAILED'
   /** Any other failure while loading. */
-  | 'LOAD_FAILED';
+  | 'LOAD_FAILED'
+  /** The user cancelled an action (e.g. a save) from a prompt. */
+  | 'CANCELLED';
 
 export class PdfEditorError extends Error {
   readonly code: PdfEditorErrorCode;
