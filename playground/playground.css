@@ -1,0 +1,10 @@
+html, body, #root { height: 100%; margin: 0; }
+body { font-family: system-ui, sans-serif; background: #c8ccd4; }
+.pg { display: flex; flex-direction: column; height: 100%; }
+.pg-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; background: #111827; color: #f3f4f6; font-size: 13px; }
+.pg-bar button, .pg-bar select { font: inherit; padding: 4px 10px; border-radius: 6px; border: 1px solid #4b5563; background: #1f2937; color: inherit; cursor: pointer; }
+.pg-bar button[aria-pressed='true'] { background: #2f6fed; border-color: #2f6fed; }
+.pg-seg { display: inline-flex; gap: 2px; }
+.pg-log { opacity: 0.75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 200px; }
+.pg-stage { flex: 1 1 auto; min-height: 0; display: flex; justify-content: center; }
+.pg-frame { max-width: 100%; height: 100%; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.2); }

@@ -1,0 +1,87 @@
+{
+  "name": "react-pdf-editor-kit",
+  "version": "0.0.1",
+  "description": "A responsive, client-side PDF viewer and in-place text editor component for React, built on pdf.js and pdf-lib.",
+  "keywords": [
+    "react",
+    "pdf",
+    "pdf-editor",
+    "pdf-viewer",
+    "edit-pdf",
+    "pdfjs",
+    "pdf-lib",
+    "react-component",
+    "document-editor",
+    "text-editing"
+  ],
+  "author": "Udit Gupta",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": [
+    "*.css"
+  ],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./styles.css": "./dist/index.css",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsup",
+    "build:playground": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint:package": "publint && attw --pack . --exclude-entrypoints styles.css",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "peerDependencies": {
+    "pdfjs-dist": ">=5.0.0",
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0"
+  },
+  "dependencies": {
+    "@pdf-lib/standard-fonts": "^1.0.0",
+    "pdf-lib": "^1.17.1"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "jsdom": "^31.0.0",
+    "pdfjs-dist": "^5.7.284",
+    "publint": "^0.3.25",
+    "react": "^19.1.10",
+    "react-dom": "^19.1.10",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.7",
+    "vitest": "^3.2.7"
+  }
+}
