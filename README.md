@@ -1,10 +1,5 @@
 # react-pdf-editor-kit
 
-[![npm version](https://img.shields.io/npm/v/react-pdf-editor-kit.svg)](https://www.npmjs.com/package/react-pdf-editor-kit)
-[![npm downloads](https://img.shields.io/npm/dm/react-pdf-editor-kit.svg)](https://www.npmjs.com/package/react-pdf-editor-kit)
-[![license](https://img.shields.io/npm/l/react-pdf-editor-kit.svg)](./LICENSE)
-[![types](https://img.shields.io/npm/types/react-pdf-editor-kit.svg)](https://www.npmjs.com/package/react-pdf-editor-kit)
-
 A responsive PDF viewer and **in-place text editor** component for React. It runs
 entirely in the browser: files opened from the user's computer are never
 uploaded anywhere.
