@@ -1,6 +1,6 @@
 {
   "name": "react-pdf-editor-kit",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "A responsive, client-side PDF viewer and in-place text editor component for React, built on pdf.js and pdf-lib.",
   "keywords": [
     "react",
