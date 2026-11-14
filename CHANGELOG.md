@@ -29,17 +29,24 @@ releases may contain breaking changes.
 - `<PdfEditor>` component: a responsive, client-side PDF viewer and editor.
 - Opening files by file picker, drag and drop, Ctrl/⌘+O, or the `file` prop
   (`File`, `Blob`, `ArrayBuffer`, `Uint8Array` or URL).
+
 - In-place paragraph text editing with font, size, bold, italic, underline,
   colour and alignment. Original text is removed from the content stream on
   export, and new text is written as real, searchable PDF text.
+
 - Undo/redo, a Save button (`onSave`), Download, and `exportPdf()`.
+
 - Configurable toolbar (`toolbarOptions`) and custom toolbar buttons
   (`customTools`), with overflow into a **More** menu on narrow layouts.
+
 - Props for controlling the editor from your app: `enableEditMode`, `onOpen`,
   `maxFileSize`, `loadingState` and `loadingComponent`, plus an exported
   `PdfLoader`.
+
 - Container-query responsive layout, thumbnail sidebar, pinch and
   Ctrl/⌘+wheel zoom, light/dark/system themes.
+
 - Password-protected PDF support (built-in dialog or `onPasswordRequest`).
+
 - Headless building blocks: `usePdfEditor`, `EditorProvider`, `PdfViewer`,
   `PdfDropzone`, `useFilePicker`, `useDropTarget`.
