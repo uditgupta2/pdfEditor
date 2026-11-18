@@ -184,7 +184,13 @@ export function TextEditLayer({ pageIndex, scale, size, baseUpToDate }: TextEdit
               width: (b.x1 - b.x0) * s + 4,
               height: (b.top - b.bottom) * s + 4,
             }}
-            title={b.editable ? 'Click to edit' : "This text uses a font that can't be edited yet"}
+            title={
+              b.editable
+                ? 'Click to edit'
+                : b.lockReason === 'script'
+                  ? "Text in this script can't be edited yet"
+                  : "This text uses a font that can't be edited yet"
+            }
             onClick={b.editable ? (e) => editBlock(b, e) : (e) => e.stopPropagation()}
           />
         ),

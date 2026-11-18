@@ -43,6 +43,11 @@ releases may contain breaking changes.
   retried on the next render.
 - Re-registering an app font with new files removes the old face from
   `document.fonts`.
+- Paragraphs in right-to-left or complex scripts (Hebrew, Arabic, Indic
+  scripts, Thai, Lao, Tibetan, Myanmar, Khmer, Mongolian), or with characters
+  the PDF doesn't map to real text, are now locked. Before, they could be
+  edited but came out garbled when saved, even unchanged. Their tooltip says
+  the script can't be edited yet.
 
 ### Changed
 

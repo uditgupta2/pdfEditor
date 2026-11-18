@@ -1,0 +1,13 @@
+.\" groff → PostScript → Ghostscript (ps2pdf), like many older Unix/TeX-era PDFs:
+.\" Type 1 fonts converted to Type1C subsets with a custom encoding.
+.ps 14
+.vs 30
+.ft R
+India times roman text in ghostscript
+.br
+.ft B
+Juliet bold text in ghostscript
+.br
+.ft H
+Kilo helvetica text in ghostscript
+.br

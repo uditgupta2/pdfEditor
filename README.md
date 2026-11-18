@@ -4,9 +4,10 @@ A responsive PDF viewer and **in-place text editor** component for React. It run
 entirely in the browser: files opened from the user's computer are never
 uploaded anywhere.
 
-> **Status: 0.x (early).** Viewing, opening files, and in-place text editing
-> in the document's own fonts work. Images, shapes, signatures and page operations come next. The API may
-> change between minor versions until 1.0.
+> **Status: 0.2.0 (early).** Viewing, opening files, and in-place text editing
+> in the document's own fonts work. Images, shapes, signatures and page
+> operations come next ([roadmap](#roadmap)). The API may change between minor
+> versions until 1.0.
 
 ## Features
 
@@ -28,8 +29,71 @@ uploaded anywhere.
 - **Typed.** Written in TypeScript and ships ESM, CommonJS and type
   declarations. Works in Next.js App Router (`"use client"` included).
 
+## What's new in 0.2.0
+
+0.2.0 is about **fonts**. In 0.1.0, edited text was always rewritten in
+Helvetica, Times or Courier, so an edited paragraph often looked different from
+the rest of the page. Now it keeps the document's look.
+
+- **Edited text stays in the document's own font.** New text is written with
+  the font already embedded in the PDF and measured with its real widths, so
+  line breaks and spacing match the original.
+- **Missing characters are handled one by one.** Embedded fonts are usually
+  subsets. If one lacks a character you type, only that character falls back:
+  to a bold/italic face of the same family, then a stand-in font you provide,
+  then the closest standard font. For TrueType fonts, every character the
+  document uses on *any* page is available, not just the current page's.
+- **Font picker.** A new `'fontFamily'` toolbar tool lists the document's
+  fonts, your fonts and the standard fonts. It is shown by default.
+- **Bring your own fonts.** A new `fonts` prop adds fonts to the picker.
+  `standInFonts()` sets up self-hosted, metric-compatible replacements for
+  common fonts (Carlito for Calibri, Caladea for Cambria, Arimo for
+  Arial/Helvetica, Tinos for Times New Roman, Cousine for Courier New).
+  Fonts are embedded as subsets on export, and their licence flags
+  (`OS/2.fsType`) are respected.
+- **What you see is what you export.** After each edit the page is re-rendered
+  with the new text drawn in its real font.
+- **Faster and lighter.** Stand-in fonts download only when a character needs
+  one. A font finishing loading redraws only the pages that use it. Shared
+  fonts are parsed once per document. A page preview leak was fixed.
+
+**Know before you upgrade: only characters the font has keep the font.** PDFs
+usually embed just the characters the document already uses. Text you type is
+kept in the original font only where that font has the character. Any other
+character is written in a plain standard font (Helvetica, Times or Courier,
+whichever is closest), unless you provide a stand-in or your own font for it.
+For example, typing a "Q" into a document that never used one gives a "Q" that
+doesn't match the letters around it. Rearranging or deleting text never has
+this problem. See [Current limitations](#current-limitations) for the full
+list.
+
+**Upgrading from 0.1.0:** no code changes are needed. Saved `DocumentEdits`
+from 0.1.0 still load and keep their standard fonts. `@pdf-lib/fontkit` is a
+new dependency, downloaded only when an app font is first used. If you pass
+your own `toolbarOptions`, add `'fontFamily'` to get the font picker. See
+[Fonts](#fonts) for details and the [changelog](./CHANGELOG.md) for the full
+list.
+
+## Roadmap
+
+Where the project stands, roughly in order:
+
+- [x] Viewing, opening files, responsive layout, theming (0.1.0)
+- [x] In-place paragraph editing with real, searchable PDF text (0.1.0)
+- [x] Editing in the document's own fonts, font picker, app fonts (0.2.0)
+- [ ] Show the document's embedded font *while typing*, not only after the edit is confirmed
+- [ ] Better coverage for subset CFF/Type 1 fonts and non-Identity CID encodings
+- [ ] Noto fallbacks for non-Latin scripts
+- [ ] Images, shapes and signatures
+- [ ] Page operations (add, delete, reorder, rotate)
+- [ ] OCR-based editing for scanned pages
+
+See [Current limitations](#current-limitations) for what doesn't work yet.
+
 ## Contents
 
+- [What's new in 0.2.0](#whats-new-in-020)
+- [Roadmap](#roadmap)
 - [Requirements](#requirements)
 - [Install](#install)
 - [Quick start](#quick-start)
@@ -323,10 +387,17 @@ having the right to use the fonts you provide.
 
 ### Current limitations
 
-- **Fonts:** characters outside Western European (WinAnsi) can only be written in the document's fonts or fonts you provide. Otherwise they are substituted on export, and you'll see a notice. A document font that the PDF doesn't encode simply (non-Identity CID encodings) falls back to the closest standard font. For subset fonts in CFF or Type 1 format, only the characters used on the current page are known to be available; others use the fallback.
+- **Fonts:**
+  - **Only characters the embedded font has stay in that font.** Most PDFs embed fonts as subsets that contain only the characters the document already uses. A character you type that isn't in the subset is written in a plain standard font (Helvetica, Times or Courier, whichever is closest), so it can look different from the text around it. Provide a stand-in or your own font with `fonts` to avoid this.
+  - For subset fonts in CFF or Type 1 format, only the characters used on the current page are known to be available; others use the fallback. TrueType subsets offer every character the document uses.
+  - Characters outside Western European (WinAnsi) can only be written in the document's fonts or fonts you provide. Otherwise they are substituted on export, and you'll see a notice.
+  - A document font that the PDF doesn't encode simply (non-Identity CID encodings) falls back to the closest standard font.
+  - Editing a paragraph re-lays it with the font's own widths, without kerning. Text from producers that fine-tune glyph positions (Chrome's "Save as PDF", for example) can come out up to about 2% narrower.
+  - Ligatures in PDFs from Chrome (ﬀ, ﬁ, ﬄ) are read as single ligature characters, not separate letters.
+- **Right-to-left and complex scripts:** paragraphs in Hebrew, Arabic, Devanagari and other Indic scripts, Thai, Lao, Tibetan, Myanmar, Khmer or Mongolian are locked. The editor writes text character by character, and these scripts need shaping or right-to-left ordering. A paragraph with any such text, even one word, is locked as a whole. So is a paragraph with characters the PDF doesn't map to real text. Their tooltip says the script can't be edited yet.
 - **Not editable yet:**
   - text inside form XObjects
-  - Type3 fonts
+  - Type3 fonts. Chrome's "Save as PDF" writes OpenType/CFF (`.otf`) web fonts as Type3, so that text can't be edited. It also isn't outlined as locked yet
   - CID fonts without a ToUnicode map
   - rotated text
   - rotated pages
@@ -540,6 +611,14 @@ npx playwright install chromium firefox webkit
 sudo npx playwright install-deps   # Linux: system libraries the browsers need (WebKit in particular)
 npm run test:e2e -- --project=chromium   # one browser
 ```
+
+### Font test PDFs
+
+`tests/producers.test.ts` edits PDFs made by real producers (Chromium, Cairo,
+Ghostscript), which embed fonts as CID TrueType, simple TrueType, Type 1C, Type 1
+and Type 3. The PDFs in `tests/fixtures/pdfs/` are committed. To rebuild them,
+run `scripts/font-pdfs/make.sh` (needs Playwright's Chromium, pycairo, groff,
+Ghostscript and the Liberation, DejaVu, Noto and URW fonts).
 
 ### Releasing
 

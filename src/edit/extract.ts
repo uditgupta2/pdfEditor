@@ -3,6 +3,21 @@ import { parseContentStream, type Operand, type Operation } from './contentStrea
 import { fontFamilyName, loadFontInfo, resolve, streamText, stripSubset, type FontInfo, type FontStyle } from './fonts';
 import type { PdfFont } from './model';
 
+/**
+ * Scripts the editor can't write yet: right-to-left text (Hebrew, Arabic, …)
+ * and scripts that need shaping (Indic, Thai, Lao, Tibetan, Myanmar, Khmer,
+ * Mongolian), including Hebrew/Arabic presentation forms. Text is rewritten
+ * character by character, which would scramble these.
+ */
+const UNWRITABLE_SCRIPT = /[\u0590-\u08ff\u0900-\u0dff\u0e00-\u0fff\u1000-\u109f\u1780-\u18af\ufb1d-\ufdff\ufe70-\ufeff]/;
+/** Glyphs the PDF maps to no real character (control codes, U+FFFD). */
+const UNMAPPED = /[\u0000-\u0008\u000e-\u001f\ufffd]/;
+
+/** Why text can't be edited even though its font can: `'script'`, or undefined. */
+export function scriptLock(text: string): 'script' | undefined {
+  return UNWRITABLE_SCRIPT.test(text) || UNMAPPED.test(text) ? 'script' : undefined;
+}
+
 type Matrix = [number, number, number, number, number, number];
 const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0];
 
@@ -106,6 +121,11 @@ export interface TextBlock {
   color: RGB;
   align: Align;
   editable: boolean;
+  /**
+   * Why the block isn't editable: `'font'` (a font, encoding or text direction
+   * the editor can't handle) or `'script'` (a script it can't write yet).
+   */
+  lockReason?: 'font' | 'script';
 }
 
 export interface PageAnalysis {
@@ -329,7 +349,7 @@ export function analyzePage(page: PDFPage, pageIndex: number): PageAnalysis {
         advance,
         tfsTh: tfs * th,
         upright,
-        editable: font.editable && upright && tfs !== 0,
+        editable: font.editable && upright && tfs !== 0 && !scriptLock(text),
       });
       segIndex++;
     }
@@ -829,5 +849,8 @@ function toBlock(lines: TextLine[], id: string, fontOf: (r: TextRun) => string |
     color,
     align,
     editable: allRuns.every((r) => r.editable),
+    ...(allRuns.every((r) => r.editable)
+      ? {}
+      : { lockReason: allRuns.some((r) => scriptLock(r.text)) ? ('script' as const) : ('font' as const) }),
   };
 }
