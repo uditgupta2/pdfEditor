@@ -8,3 +8,7 @@ coverage
 
 # Local test app (not published)
 sandbox
+
+# Playwright
+test-results
+playwright-report

@@ -21,5 +21,6 @@
 - [ ] Noto fallbacks for other scripts (removes the "characters substituted" notice)
 - [ ] New text added on an empty spot uses Helvetica; consider the page's most used font instead
 - [ ] Word spaces aren't written as characters (words are positioned one by one), which affects copy/paste in some viewers
-- [ ] Try in real browsers: picker with a selection (`execCommand('fontName')`), Firefox and Safari
+- [x] Try in real browsers: picker with a selection (`execCommand('fontName')`) and Firefox are covered by Playwright tests (`e2e/`)
+- [ ] Run the e2e tests in WebKit (Safari): needs `sudo npx playwright install-deps` on this machine
 - [ ] Known risk: pdf-lib subsetting breaks some CFF-based `.otf` files; prefer TTF

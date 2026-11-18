@@ -486,9 +486,22 @@ Safari 16 and Firefox 110. pdf.js 5 has similar requirements.
 npm install
 npm run dev            # playground at http://localhost:5173 (Load sample, width presets, theme)
 npm test               # vitest
+npm run test:e2e       # Playwright: Chromium, Firefox and WebKit (see below)
 npm run typecheck
 npm run build          # dist/ (ESM + CJS + d.ts + styles.css)
 npm run lint:package   # check package.json exports and types (publint + arethetypeswrong)
+```
+
+### End-to-end tests
+
+`e2e/` drives the editor in real browsers through `e2e/harness.html`, which Vite
+serves (the test run starts it). The tests build their PDFs in Node, edit and
+save in the browser, then read the saved file back. First run:
+
+```bash
+npx playwright install chromium firefox webkit
+sudo npx playwright install-deps   # Linux: system libraries the browsers need (WebKit in particular)
+npm run test:e2e -- --project=chromium   # one browser
 ```
 
 ### Releasing
