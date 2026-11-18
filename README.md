@@ -5,7 +5,7 @@ entirely in the browser: files opened from the user's computer are never
 uploaded anywhere.
 
 > **Status: 0.x (early).** Viewing, opening files, and in-place text editing
-> work. Images, shapes, signatures and page operations come next. The API may
+> in the document's own fonts work. Images, shapes, signatures and page operations come next. The API may
 > change between minor versions until 1.0.
 
 ## Features
@@ -523,7 +523,7 @@ suite but isn't part of the regular runs yet.
 npm install
 npm run dev            # playground at http://localhost:5173 (Load sample, width presets, theme)
 npm test               # vitest
-npm run test:e2e       # Playwright: Chromium, Firefox and WebKit (see below)
+npm run test:e2e       # Playwright: Chromium and Firefox; WebKit needs system libraries (see below)
 npm run typecheck
 npm run build          # dist/ (ESM + CJS + d.ts + styles.css)
 npm run lint:package   # check package.json exports and types (publint + arethetypeswrong)
@@ -543,7 +543,8 @@ npm run test:e2e -- --project=chromium   # one browser
 
 ### Releasing
 
-1. Update `CHANGELOG.md` and bump the version: `npm version patch` (or `minor` / `major`).
+1. Move the `[Unreleased]` entries in `CHANGELOG.md` under the new version, then
+   bump it: `npm version patch` (or `minor` / `major`), which also creates the git tag.
 2. `npm publish`. `prepublishOnly` runs the typecheck, tests and build first.
 3. `git push --follow-tags`.
 
