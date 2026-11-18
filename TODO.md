@@ -14,8 +14,9 @@
 
 - [ ] Show the embedded original font *while typing*: extract `FontFile2`, add a Unicode `cmap` from ToUnicode, load it with `FontFace` (TrueType only; CFF/Type 1 stay as they are)
 - [ ] Write fonts with non-Identity CID encodings (needs code → CID mapping through the CMap)
-- [ ] Count glyphs used on *all* analysed pages for a shared subset font, not just the current page
-- [ ] Check a real glyph exists in subset fonts (parse `FontFile2` with fontkit) instead of trusting "used on this page"
+- [x] Count glyphs used on *all* pages for a shared subset font: done for TrueType (read from the font program); CFF/Type 1 subsets still offer only the current page's glyphs
+- [x] Check a real glyph exists in subset fonts: `FontFile2` is read by a small TrueType reader (`src/edit/trueType.ts`; fontkit is too large to load for analysis). The mapping is trusted only if it agrees with the glyphs the page draws
+- [ ] Same check for CFF (`FontFile3`) and Type 1 (`FontFile`) programs
 - [x] Respect `OS/2.fsType` of app fonts; refuse fonts that forbid embedding (and embed whole when subsetting is forbidden)
 - [ ] Noto fallbacks for other scripts (removes the "characters substituted" notice)
 - [ ] New text added on an empty spot uses Helvetica; consider the page's most used font instead

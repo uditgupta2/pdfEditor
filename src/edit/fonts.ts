@@ -13,6 +13,7 @@ import {
   type PDFObject,
 } from 'pdf-lib';
 import { bytesToBinary, parseContentStream, type Operand } from './contentStream';
+import { readTrueType, type GlyphState, type TrueTypeProgram } from './trueType';
 
 export type FontFamilyClass = 'sans' | 'serif' | 'mono';
 
@@ -46,6 +47,12 @@ export interface FontInfo {
   codeBytes: 1 | 2;
   /** Every code that decodes to exactly one character. */
   allCodes(): number[];
+  /**
+   * Whether the embedded font program has the glyph for a code, read from the
+   * program itself. Null when that can't be told: not embedded, not TrueType
+   * (CFF and Type 1 aren't read), or the program is unreadable. Computed on first call.
+   */
+  glyphCheck(): ((code: number) => GlyphState) | null;
 }
 
 const SUBSET_RE = /^[A-Z]{6}\+/;
@@ -207,6 +214,30 @@ export function streamText(context: PDFContext, obj: PDFObject | undefined): str
   return null;
 }
 
+function streamBytes(context: PDFContext, obj: PDFObject | undefined): Uint8Array | null {
+  const s = resolve(context, obj);
+  try {
+    if (s instanceof PDFRawStream) return decodePDFRawStream(s).decode();
+    if (s instanceof PDFStream) return (s as unknown as { getUnencodedContents(): Uint8Array }).getUnencodedContents();
+  } catch {
+    // undecodable stream: treat as absent
+  }
+  return null;
+}
+
+/** Memoise a computation that is only needed for some fonts. */
+function lazy<T>(make: () => T): () => T {
+  let done = false;
+  let value: T;
+  return () => {
+    if (!done) {
+      value = make();
+      done = true;
+    }
+    return value;
+  };
+}
+
 function num(context: PDFContext, obj: PDFObject | undefined): number | undefined {
   const v = resolve(context, obj);
   return v instanceof PDFNumber ? v.asNumber() : undefined;
@@ -289,6 +320,10 @@ export function loadFontInfo(context: PDFContext, fontObj: PDFObject | undefined
   const style = classifyFont(baseName, flags);
   const embedded = !!descriptor && ['FontFile', 'FontFile2', 'FontFile3'].some((k) => descriptor!.has(PDFName.of(k)));
   const subset = SUBSET_RE.test(baseName);
+  const program = lazy((): TrueTypeProgram | null => {
+    const file = descriptor ? streamBytes(context, descriptor.get(PDFName.of('FontFile2'))) : null;
+    return file ? readTrueType(file) : null;
+  });
 
   const toUnicodeText = streamText(context, dict.get(PDFName.of('ToUnicode')));
   const cmap = toUnicodeText ? parseToUnicodeCMap(toUnicodeText) : null;
@@ -329,6 +364,16 @@ export function loadFontInfo(context: PDFContext, fontObj: PDFObject | undefined
     const editable = !!cmap && cmap.map.size > 0 && (identity || !!cmap);
     // Writing needs codes to equal CIDs (W is keyed by CID) and a fixed 2-byte code.
     const writable = editable && encoding === 'Identity-H' && codeLen === 2 && (cmap?.ranges.length ?? 0) <= 1;
+    // With Identity-H the code is the CID; CIDToGIDMap turns it into a glyph id.
+    const glyphCheck = lazy(() => {
+      const p = program();
+      if (!p || !identity || !descendant) return null;
+      const map = resolve(context, descendant.get(PDFName.of('CIDToGIDMap')));
+      if (map === undefined || (map instanceof PDFName && map.decodeText() === 'Identity')) return (cid: number) => p.glyph(cid);
+      const table = streamBytes(context, map);
+      if (!table) return null;
+      return (cid: number) => p.glyph(2 * cid + 1 < table.length ? (table[2 * cid]! << 8) | table[2 * cid + 1]! : 0);
+    });
     return {
       baseName,
       style,
@@ -342,6 +387,7 @@ export function loadFontInfo(context: PDFContext, fontObj: PDFObject | undefined
       subset,
       codeBytes: 2,
       allCodes: () => (cmap ? [...cmap.map].filter(([, u]) => Array.from(u).length === 1).map(([c]) => c) : []),
+      glyphCheck,
     };
   }
 
@@ -376,6 +422,25 @@ export function loadFontInfo(context: PDFContext, fontObj: PDFObject | undefined
   }
   const symbolic = /symbol|dingbat|wingding|webding/i.test(baseName);
   const unicode = (c: number) => cmap?.map.get(c) ?? diffs.get(c) ?? base(c);
+  // Code → glyph id in a simple TrueType font (ISO 32000-1, 9.6.6.4): through the
+  // encoding's character and the Unicode cmap for non-symbolic fonts, else the
+  // (3,0) symbol cmap (codes may sit at 0xF000+), else the Mac (1,0) cmap.
+  const glyphCheck = lazy(() => {
+    const p = subtype === 'TrueType' ? program() : null;
+    if (!p) return null;
+    let toGid: ((code: number) => number) | null = null;
+    const uni = p.cmap(3, 10) ?? p.cmap(3, 1);
+    const sym = p.cmap(3, 0);
+    if (uni && ((flags & 32) !== 0 || !sym)) {
+      toGid = (c) => {
+        const ch = (diffs.get(c) ?? base(c)) || unicode(c);
+        return Array.from(ch).length === 1 ? uni(ch.codePointAt(0)!) : 0;
+      };
+    } else if (sym) toGid = (c) => sym(c) || sym(0xf000 + c) || sym(0xf100 + c) || sym(0xf200 + c);
+    else toGid = p.cmap(1, 0);
+    const lookup = toGid;
+    return lookup ? (c: number) => p.glyph(lookup(c)) : null;
+  });
 
   return {
     baseName,
@@ -406,6 +471,7 @@ export function loadFontInfo(context: PDFContext, fontObj: PDFObject | undefined
       for (let c = 0; c < 256; c++) if (Array.from(unicode(c)).length === 1) out.push(c);
       return out;
     },
+    glyphCheck,
   };
 }
 
@@ -444,5 +510,6 @@ function unknownFont(baseName: string): FontInfo {
     subset: false,
     codeBytes: 1,
     allCodes: () => [],
+    glyphCheck: () => null,
   };
 }

@@ -467,24 +467,30 @@ export function analyzePage(page: PDFPage, pageIndex: number): PageAnalysis {
 
 /**
  * The page fonts new text can be written in, and which characters each can
- * draw. A subset font only contains the glyphs the document uses, so only
- * codes seen on this page count; a complete (or non-embedded) font can draw
- * every character its encoding maps.
+ * draw. For an embedded TrueType program the glyphs are looked up in the
+ * program itself, so a subset offers every character the *document* uses, not
+ * only this page's. Otherwise a subset font offers only the codes seen on this
+ * page, and a complete (or non-embedded) font every character its encoding maps.
  */
 function writableFonts(cache: Map<string, FontInfo>, usedCodes: Map<string, Set<number>>): Record<string, PdfFont> {
   const out: Record<string, PdfFont> = {};
   for (const [key, info] of cache) {
     if (!info.writable || !info.editable) continue;
     const used = usedCodes.get(key) ?? new Set<number>();
+    const check = info.embedded ? trustedGlyphCheck(info, used) : null;
     // Codes the page uses come first, so they win when two codes map to one character.
-    const candidates = info.embedded && info.subset ? [...used] : [...new Set([...used, ...info.allCodes()])];
+    const candidates = info.embedded && info.subset && !check ? [...used] : [...new Set([...used, ...info.allCodes()])];
     const glyphs: PdfFont['glyphs'] = {};
     for (const code of candidates) {
       const ch = info.unicode(code);
       if (Array.from(ch).length !== 1 || ch < ' ' || glyphs[ch]) continue;
       const w = info.width(code);
-      // An unused code with no width in an embedded font is most likely a missing glyph.
-      if (info.embedded && !used.has(code) && !(w > 0) && ch !== ' ') continue;
+      if (!used.has(code)) {
+        if (check) {
+          const state = check(code);
+          if (state === 'missing' || (state === 'blank' && !/\s/.test(ch))) continue;
+        } else if (info.embedded && !(w > 0) && ch !== ' ') continue; // no width: most likely a missing glyph
+      }
       glyphs[ch] = [code, w];
     }
     if (!Object.keys(glyphs).length) continue;
@@ -499,6 +505,25 @@ function writableFonts(cache: Map<string, FontInfo>, usedCodes: Map<string, Set<
     };
   }
   return out;
+}
+
+/**
+ * The font program's glyph check, if it agrees with what the page draws: every
+ * code the page shows with a visible character must have an outline. If not,
+ * our code → glyph mapping is wrong for this font, and trusting it could draw
+ * the wrong glyphs, so it isn't used.
+ */
+function trustedGlyphCheck(info: FontInfo, used: Set<number>) {
+  const check = info.glyphCheck();
+  if (!check) return null;
+  let seen = 0;
+  for (const code of used) {
+    const ch = info.unicode(code);
+    if (!ch || /^\s+$/.test(ch)) continue;
+    if (check(code) !== 'drawn') return null;
+    seen++;
+  }
+  return seen ? check : null;
 }
 
 // ---------------------------------------------------------------------------

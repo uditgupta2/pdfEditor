@@ -12,7 +12,9 @@ releases may contain breaking changes.
 - Edited text is written in the document's own font, by its existing
   resource, instead of Helvetica/Times/Courier. Characters a subset font lacks
   fall back one by one: a bold/italic sibling, a stand-in, then the closest
-  standard font.
+  standard font. For embedded TrueType fonts the glyphs are read from the
+  font program itself, so a subset offers every character the document uses,
+  not only the current page's.
 - `fonts` prop (`EditorFont[]`) for app-provided fonts, and `standInFonts()`
   for the metric-compatible stand-ins (Carlito, Caladea, Arimo, Tinos,
   Cousine). App fonts are embedded as subsets on export. Their embedding

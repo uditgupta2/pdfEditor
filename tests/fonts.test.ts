@@ -9,6 +9,7 @@ import { faceChain } from '../src/edit/faces';
 import { fontFamilyName } from '../src/edit/fonts';
 import { frameFromBlock } from '../src/edit/frames';
 import { layoutFrame } from '../src/edit/layout';
+import { readTrueType } from '../src/edit/trueType';
 import type { TextFrame } from '../src/edit/model';
 
 const fixture = (name: string) => new Uint8Array(readFileSync(resolve(process.cwd(), 'tests/fixtures/fonts', name)));
@@ -269,19 +270,21 @@ describe('app fonts', () => {
   });
 });
 
+/** Offset of a table in a TrueType file. */
+function tableOffset(bytes: Uint8Array, tag: string) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  for (let i = 0; i < view.getUint16(4); i++) {
+    const rec = 12 + i * 16;
+    if (String.fromCharCode(...bytes.subarray(rec, rec + 4)) === tag) return view.getUint32(rec + 8);
+  }
+  throw new Error(`no ${tag} table`);
+}
+
 /** Copy of a TrueType file with `OS/2.fsType` set to `value`. */
 function withFsType(bytes: Uint8Array, value: number) {
   const out = bytes.slice();
-  const view = new DataView(out.buffer);
-  const numTables = view.getUint16(4);
-  for (let i = 0; i < numTables; i++) {
-    const rec = 12 + i * 16;
-    if (String.fromCharCode(...out.subarray(rec, rec + 4)) === 'OS/2') {
-      view.setUint16(view.getUint32(rec + 8) + 8, value); // fsType is at offset 8 of the table
-      return out;
-    }
-  }
-  throw new Error('no OS/2 table');
+  new DataView(out.buffer).setUint16(tableOffset(out, 'OS/2') + 8, value); // fsType is at offset 8 of the table
+  return out;
 }
 
 /** Length of every embedded TrueType program in the PDF. */
@@ -353,5 +356,98 @@ describe('font licensing (OS/2 fsType)', () => {
     const [subset] = await fontFileLengths(await page('may-subset'));
     expect(whole).toBe(full.length);
     expect(subset).toBeLessThan(full.length / 4);
+  });
+});
+
+/** Copy of a TrueType file in which the glyphs for `chars` have no outline, as a subsetter leaves them. */
+function withBlankGlyphs(bytes: Uint8Array, chars: string) {
+  const out = bytes.slice();
+  const view = new DataView(out.buffer);
+  const font = readTrueType(out)!;
+  const longLoca = view.getInt16(tableOffset(out, 'head') + 50) === 1;
+  const loca = tableOffset(out, 'loca');
+  const glyf = tableOffset(out, 'glyf');
+  for (const ch of chars) {
+    const gid = font.cmap(3, 1)!(ch.codePointAt(0)!);
+    const at = longLoca ? view.getUint32(loca + gid * 4) : view.getUint16(loca + gid * 2) * 2;
+    view.setInt16(glyf + at, 0); // numberOfContours = 0
+  }
+  return out;
+}
+
+/**
+ * A page showing `text` in a simple (WinAnsi) TrueType font whose embedded
+ * program is `program`, named like a subset.
+ */
+async function simpleTrueTypePdf(program: Uint8Array, text: string) {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([400, 300]);
+  const ctx = doc.context;
+  const name = 'ABCDEF+LiberationSans';
+  const descriptor = ctx.register(
+    ctx.obj({
+      Type: 'FontDescriptor', FontName: name, Flags: 32, FontBBox: [0, -212, 1000, 905], ItalicAngle: 0,
+      Ascent: 905, Descent: -212, CapHeight: 716, StemV: 80,
+      FontFile2: ctx.register(ctx.flateStream(program, { Length1: program.length })),
+    }),
+  );
+  const font = ctx.register(
+    ctx.obj({
+      Type: 'Font', Subtype: 'TrueType', BaseFont: name, FirstChar: 32, LastChar: 255,
+      Widths: Array.from({ length: 224 }, () => 556), Encoding: 'WinAnsiEncoding', FontDescriptor: descriptor,
+    }),
+  );
+  page.node.setFontDictionary(PDFName.of('F1'), font);
+  page.node.set(PDFName.of('Contents'), ctx.register(ctx.flateStream(`BT /F1 14 Tf 40 200 Td (${text}) Tj ET`)));
+  return doc.save();
+}
+
+const glyphList = (bytes: Uint8Array) =>
+  PDFDocument.load(bytes).then((d) => Object.keys(Object.values(analyzePage(d.getPage(0), 0).fonts)[0]?.glyphs ?? {}).sort().join(''));
+
+describe('glyphs a subset font program really has', () => {
+  const regular = () => fixture('LiberationSans-Regular.ttf');
+
+  it('reads glyph presence from a TrueType program', () => {
+    const font = readTrueType(withBlankGlyphs(regular(), 'Z'))!;
+    const gid = (ch: string) => font.cmap(3, 1)!(ch.codePointAt(0)!);
+    expect(font.glyph(gid('A'))).toBe('drawn');
+    expect(font.glyph(gid('Z'))).toBe('blank');
+    expect(font.glyph(gid(' '))).toBe('blank');
+    expect(font.glyph(0)).toBe('missing');
+    expect(font.glyph(font.numGlyphs)).toBe('missing');
+    expect(readTrueType(new Uint8Array([0x4f, 0x54, 0x54, 0x4f, 0, 0, 0, 0, 0, 0, 0, 0]))).toBeNull(); // CFF ('OTTO')
+    expect(readTrueType(new Uint8Array(4))).toBeNull();
+  });
+
+  it('offers glyphs the subset has for other pages (Identity-H)', async () => {
+    const doc = await PDFDocument.create();
+    doc.registerFontkit(fontkit);
+    const font = await doc.embedFont(regular(), { subset: true });
+    doc.addPage([400, 300]).drawText('Hello world', { x: 40, y: 200, size: 14, font });
+    doc.addPage([400, 300]).drawText('Zebra', { x: 40, y: 200, size: 14, font });
+    // pdf-lib names subsets `Name-1234`; give it the standard `ABCDEF+` prefix so it is read as a subset.
+    const saved = await PDFDocument.load(await doc.save());
+    for (const [, obj] of saved.context.enumerateIndirectObjects()) {
+      if (!(obj instanceof PDFDict)) continue;
+      for (const key of ['BaseFont', 'FontName']) if (obj.has(PDFName.of(key))) obj.set(PDFName.of(key), PDFName.of('ABCDEF+LiberationSans'));
+    }
+    // Page 1 alone uses " Hdelorw"; the subset also has Z, b and a from page 2.
+    expect(await glyphList(await saved.save())).toBe(' HZabdelorw');
+  });
+
+  it('offers every glyph a simple TrueType subset has, and none that it lacks', async () => {
+    const glyphs = await glyphList(await simpleTrueTypePdf(withBlankGlyphs(regular(), 'Zq'), 'Hello'));
+    expect(glyphs).toContain('A');
+    expect(glyphs).toContain('é');
+    expect(glyphs).toContain(' ');
+    expect(glyphs).not.toContain('Z');
+    expect(glyphs).not.toContain('q');
+  });
+
+  it("doesn't trust the program when it disagrees with the page, and offers only the page's glyphs", async () => {
+    // 'H' is drawn on the page but blank in the program: our code → glyph mapping can't be right.
+    const glyphs = await glyphList(await simpleTrueTypePdf(withBlankGlyphs(regular(), 'H'), 'Hello'));
+    expect(glyphs).toBe('Helo');
   });
 });
