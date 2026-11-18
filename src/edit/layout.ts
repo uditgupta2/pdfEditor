@@ -1,4 +1,4 @@
-import { measure } from './metrics';
+import { faceChain, faceFor, faceWidth, type Face } from './faces';
 import type { RGB, SpanStyle, TextFrame } from './model';
 
 /**
@@ -8,6 +8,8 @@ import type { RGB, SpanStyle, TextFrame } from './model';
 
 export interface Fragment extends SpanStyle {
   text: string;
+  /** The face that draws this text (the span's font, or a fallback for characters it lacks). */
+  face: Face;
   /** A word space follows this fragment (for copy/paste and screen readers). */
   spaceAfter?: boolean;
   /** Offset from the frame's left edge, points. */
@@ -32,32 +34,42 @@ export interface FrameLayout {
 
 interface Glyph extends SpanStyle {
   ch: string;
+  face: Face;
 }
 
-const sameStyle = (a: SpanStyle, b: SpanStyle) =>
+const sameStyle = (a: SpanStyle & { face: Face }, b: SpanStyle & { face: Face }) =>
+  a.face.id === b.face.id &&
+  a.font === b.font &&
   !!a.bold === !!b.bold &&
   !!a.italic === !!b.italic &&
   !!a.underline === !!b.underline &&
   (a.color?.join() ?? '') === (b.color?.join() ?? '');
 
 export function layoutFrame(frame: TextFrame): FrameLayout {
-  const { width: maxWidth, size, family, align } = frame;
-  const w = (g: Glyph) => measure(g.ch, family, !!g.bold, !!g.italic, size);
+  const { width: maxWidth, size, align } = frame;
+  const w = (g: Glyph) => faceWidth(g.face, g.ch, size);
   const lines: LaidOutLine[] = [];
   let contentWidth = 0;
   const tolerance = maxWidth * 0.005 + 0.01;
 
   for (const para of frame.paragraphs) {
     const glyphs: Glyph[] = [];
-    for (const s of para.spans) for (const ch of Array.from(s.text)) glyphs.push({ ...s, ch, text: undefined } as Glyph);
+    for (const s of para.spans) {
+      const { text, ...style } = s;
+      const chain = faceChain(frame, style);
+      for (const raw of Array.from(text)) {
+        const ch = raw === '\t' ? ' ' : raw;
+        glyphs.push({ ...style, ch, face: faceFor(chain, ch) });
+      }
+    }
 
     // tokens: words and single spaces
     const tokens: Glyph[][] = [];
     let cur: Glyph[] = [];
     for (const g of glyphs) {
-      if (g.ch === ' ' || g.ch === '\t') {
+      if (g.ch === ' ') {
         if (cur.length) tokens.push(cur);
-        tokens.push([{ ...g, ch: ' ' }]);
+        tokens.push([g]);
         cur = [];
       } else cur.push(g);
     }

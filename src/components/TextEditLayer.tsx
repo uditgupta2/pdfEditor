@@ -1,8 +1,11 @@
 import { memo, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { cssBaselineOffset, sampleBackground } from '../edit/dom';
 import type { PageAnalysis, TextBlock } from '../edit/extract';
+import { cssFontStack, frameFont } from '../edit/faces';
 import { layoutFrame } from '../edit/layout';
-import { CSS_FAMILY, CSS_FONT_METRICS } from '../edit/metrics';
+import { CSS_FONT_METRICS } from '../edit/metrics';
+import { useFontLibraryVersion } from '../hooks/useFontLibrary';
+import { frameFromBlock } from '../edit/frames';
 import { cssColor, newId, type TextFrame } from '../edit/model';
 import { PDF_TO_CSS_UNITS, type PageSize } from '../core/zoom';
 import { useEditor } from './context';
@@ -22,6 +25,7 @@ const FrameView = memo(function FrameView({
   s,
   toCss,
   covered,
+  baked,
   interactive,
   onEdit,
 }: {
@@ -29,10 +33,13 @@ const FrameView = memo(function FrameView({
   s: number;
   toCss(x: number, y: number): { left: number; top: number };
   covered: boolean;
+  /** The page bitmap already shows this frame's text (drawn by the PDF renderer, in its real fonts). */
+  baked: boolean;
   interactive: boolean;
   onEdit(frame: TextFrame, e: MouseEvent): void;
 }) {
-  const layout = useMemo(() => layoutFrame(frame), [frame]);
+  const fontsVersion = useFontLibraryVersion();
+  const layout = useMemo(() => layoutFrame(frame), [frame, fontsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
   const fontPx = frame.size * s;
   const origin = toCss(frame.x, frame.baseline);
   const asc = CSS_FONT_METRICS[frame.family].ascent * fontPx;
@@ -41,7 +48,7 @@ const FrameView = memo(function FrameView({
   const fragTop = cssBaselineOffset(frame.family, fontPx, fontPx);
   return (
     <div
-      className={`rpe-frame${interactive ? ' is-interactive' : ''}`}
+      className={`rpe-frame${interactive ? ' is-interactive' : ''}${baked ? ' is-baked' : ''}`}
       style={{
         left: origin.left,
         top,
@@ -59,7 +66,7 @@ const FrameView = memo(function FrameView({
             style={{
               left: f.x * s,
               top: asc + line.dy * s - fragTop,
-              fontFamily: CSS_FAMILY[frame.family],
+              fontFamily: cssFontStack(frame, f.font ?? frameFont(frame)),
               fontSize: fontPx,
               lineHeight: `${fontPx}px`,
               fontWeight: f.bold ? 700 : 400,
@@ -77,32 +84,6 @@ const FrameView = memo(function FrameView({
     </div>
   );
 });
-
-function frameFromBlock(block: TextBlock, cover: TextFrame['cover']): TextFrame {
-  const slack = block.align === 'left' ? block.size * 0.6 : 0;
-  return {
-    id: newId(),
-    sourceBlockId: block.id,
-    x: block.x0,
-    baseline: block.firstBaseline,
-    width: Math.max(block.x1 - block.x0 + slack, block.size * 2),
-    size: Math.round(block.size * 100) / 100,
-    lineHeight: block.lineHeight,
-    family: block.family,
-    color: block.color,
-    align: block.align,
-    paragraphs: block.paragraphs.map((p) => ({
-      spans: p.spans.map((sp) => ({
-        text: sp.text,
-        ...(sp.bold ? { bold: true } : {}),
-        ...(sp.italic ? { italic: true } : {}),
-        ...(sp.underline ? { underline: true } : {}),
-        ...(sp.color ? { color: sp.color } : {}),
-      })),
-    })),
-    cover,
-  };
-}
 
 export function TextEditLayer({ pageIndex, scale, size, baseUpToDate }: TextEditLayerProps) {
   const editor = useEditor();
@@ -145,7 +126,7 @@ export function TextEditLayer({ pageIndex, scale, size, baseUpToDate }: TextEdit
     const top = (view[3] - block.top) * s;
     const cover = sampleBackground(canvas(), { left, top, width: (block.x1 - block.x0) * s, height: (block.top - block.bottom) * s }, size.width * s);
     setCaretAt({ x: e.clientX, y: e.clientY });
-    beginEdit({ pageIndex, frame: frameFromBlock(block, cover), sourceRunIds: block.runIds });
+    beginEdit({ pageIndex, frame: frameFromBlock(block, analysis?.fonts ?? {}, cover), sourceRunIds: block.runIds });
   };
 
   const editFrame = (frame: TextFrame, e: MouseEvent) => {
@@ -216,6 +197,7 @@ export function TextEditLayer({ pageIndex, scale, size, baseUpToDate }: TextEdit
             s={s}
             toCss={toCss}
             covered={!baseUpToDate}
+            baked={baseUpToDate}
             interactive={editing}
             onEdit={editFrame}
           />

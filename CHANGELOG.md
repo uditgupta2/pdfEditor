@@ -7,6 +7,28 @@ releases may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- Edited text is written in the document's own font, by its existing
+  resource, instead of Helvetica/Times/Courier. Characters a subset font lacks
+  fall back one by one: a bold/italic sibling, a stand-in, then the closest
+  standard font.
+- `fonts` prop (`EditorFont[]`) for app-provided fonts, and `standInFonts()`
+  for the metric-compatible stand-ins (Carlito, Caladea, Arimo, Tinos,
+  Cousine). App fonts are embedded as subsets on export. Their embedding
+  flags (`OS/2.fsType`) are respected: fonts that forbid embedding are not
+  used, and fonts that forbid subsetting are embedded whole.
+- Font picker (`'fontFamily'` in `toolbarOptions`), shown by default.
+- Edited pages are re-rendered with their new text drawn in, so the screen
+  shows the real fonts after each edit.
+
+### Changed
+
+- Spans and frames carry their font (`Span.font`, `TextFrame.font`,
+  `TextFrame.fonts`). Saved `DocumentEdits` from 0.1.0 still work: without a
+  font they use the standard font as before.
+- `@pdf-lib/fontkit` is a new dependency, loaded only when an app font is used.
+
 ## [0.1.0] - 2026-11-14
 
 First public release.

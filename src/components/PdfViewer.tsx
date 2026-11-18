@@ -5,7 +5,8 @@ import { useElementSize } from '../hooks/useElementSize';
 import { useEditor } from './context';
 import { PdfPage } from './PdfPage';
 import { TextEditLayer } from './TextEditLayer';
-import { removalKey } from '../edit/session';
+import { pageRenderKey } from '../edit/session';
+import { useFontLibraryVersion } from '../hooks/useFontLibrary';
 
 export interface PdfViewerProps {
   className?: string;
@@ -55,6 +56,17 @@ function contentWidthOf(layout: PageLayout, viewerWidth: number, pad: number) {
 export function PdfViewer({ className, textLayer = true }: PdfViewerProps) {
   const editor = useEditor();
   const { document: doc, documentKey, pageSizes, zoom, scrollRequest, mode, edits, session } = editor;
+  useFontLibraryVersion(); // page render keys depend on loaded fonts
+  // The frame open in the inline editor is left out of the rendered page, so
+  // the old text doesn't show underneath while it is being changed.
+  const reEditing = editor.activeEdit?.existingFrameId ? editor.activeEdit : null;
+  const reEditedPage = useMemo(() => {
+    if (!reEditing) return null;
+    const page = edits[reEditing.pageIndex];
+    if (!page) return null;
+    return { index: reEditing.pageIndex, edits: { ...page, frames: page.frames.filter((f) => f.id !== reEditing.existingFrameId) } };
+  }, [edits, reEditing?.pageIndex, reEditing?.existingFrameId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const renderEdits = (i: number) => (reEditedPage?.index === i ? reEditedPage.edits : edits[i]);
   const editing = mode === 'edit';
   const viewerRef = useRef<HTMLDivElement>(null);
   const pagesRef = useRef<HTMLDivElement>(null);
@@ -237,8 +249,8 @@ export function PdfViewer({ className, textLayer = true }: PdfViewerProps) {
             const left = Math.max(pad, (box.width - size.width) / 2);
             const top = layout.tops[i]!;
             const inRange = i >= range.start && i <= range.end;
-            const removed = edits[i]?.removedRuns;
-            const key = removalKey(removed);
+            const pageEdits = renderEdits(i);
+            const key = pageRenderKey(pageEdits);
             const hasPageEdits = !!edits[i];
             return inRange ? (
               <PdfPage
@@ -252,7 +264,7 @@ export function PdfViewer({ className, textLayer = true }: PdfViewerProps) {
                 textLayer={textLayer && !editing}
                 style={{ position: 'absolute', top, left }}
                 renderKey={key}
-                getPage={removed?.length && session ? () => session.renderPage(i, removed) : undefined}
+                getPage={pageEdits && key !== 'original' && session ? () => session.renderPage(i, pageEdits) : undefined}
                 overlay={
                   editing || hasPageEdits
                     ? (renderedKey) => (

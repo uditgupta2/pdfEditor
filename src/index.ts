@@ -40,6 +40,7 @@ export {
   type UnresolvedContentInfo,
   type UnresolvedContentRequest,
 } from './hooks/usePdfEditor';
+
 export type {
   TextFrame,
   DocumentEdits,
@@ -49,8 +50,11 @@ export type {
   SpanStyle,
   Align,
   FamilyClass,
+  FontChoice,
+  PdfFont,
   RGB,
 } from './edit/model';
+export { standInFonts, type EditorFont, type FontFileSource } from './edit/fontLibrary';
 export { useFilePicker, pickFiles, PDF_ACCEPT, type PickFilesOptions, type UseFilePickerOptions } from './hooks/useFilePicker';
 export { useDropTarget, type UseDropTargetOptions } from './hooks/useDropTarget';
 

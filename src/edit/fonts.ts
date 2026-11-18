@@ -36,6 +36,33 @@ export interface FontInfo {
   isSpace(code: number): boolean;
   /** False when we cannot reliably decode the text (e.g. Type3, no ToUnicode). */
   editable: boolean;
+  /** New text can be written with this font by its resource name (simple fonts and Identity-H). */
+  writable: boolean;
+  /** The font program is embedded in the PDF. */
+  embedded: boolean;
+  /** Subset prefix (`ABCDEF+`): the embedded program only has the glyphs the document uses. */
+  subset: boolean;
+  /** Bytes per code in a string operand. */
+  codeBytes: 1 | 2;
+  /** Every code that decodes to exactly one character. */
+  allCodes(): number[];
+}
+
+const SUBSET_RE = /^[A-Z]{6}\+/;
+
+/** `ABCDEF+TimesNewRomanPS-BoldMT` → `TimesNewRomanPS-BoldMT`. */
+export const stripSubset = (name: string) => name.replace(SUBSET_RE, '');
+
+/**
+ * Family name for display and grouping: `TimesNewRomanPS-BoldItalicMT` →
+ * `Times New Roman`, `Calibri,Bold` → `Calibri`, `ArialMT` → `Arial`.
+ */
+export function fontFamilyName(baseName: string): string {
+  let n = stripSubset(baseName).split(/[-,]/)[0]!;
+  n = n.replace(/(PSMT|PS|MT)$/, '');
+  n = n.replace(/(Bold|Italic|Oblique|Regular|Semibold|Light|Medium|Black)+$/, (m) => (m.length < n.length ? '' : m));
+  // Insert spaces at lower→upper boundaries: TimesNewRoman → Times New Roman.
+  return n.replace(/([a-z])([A-Z])/g, '$1 $2').trim() || stripSubset(baseName);
 }
 
 // ---------------------------------------------------------------------------
@@ -260,6 +287,8 @@ export function loadFontInfo(context: PDFContext, fontObj: PDFObject | undefined
   if (fdObj instanceof PDFDict) descriptor = fdObj;
   const flags = descriptor ? num(context, descriptor.get(PDFName.of('Flags'))) ?? 0 : 0;
   const style = classifyFont(baseName, flags);
+  const embedded = !!descriptor && ['FontFile', 'FontFile2', 'FontFile3'].some((k) => descriptor!.has(PDFName.of(k)));
+  const subset = SUBSET_RE.test(baseName);
 
   const toUnicodeText = streamText(context, dict.get(PDFName.of('ToUnicode')));
   const cmap = toUnicodeText ? parseToUnicodeCMap(toUnicodeText) : null;
@@ -296,6 +325,10 @@ export function loadFontInfo(context: PDFContext, fontObj: PDFObject | undefined
       }
     }
     const codeLen = cmap?.ranges.length ? cmap.ranges[0]!.len : 2;
+    // Without ToUnicode a CID font's text can't be decoded.
+    const editable = !!cmap && cmap.map.size > 0 && (identity || !!cmap);
+    // Writing needs codes to equal CIDs (W is keyed by CID) and a fixed 2-byte code.
+    const writable = editable && encoding === 'Identity-H' && codeLen === 2 && (cmap?.ranges.length ?? 0) <= 1;
     return {
       baseName,
       style,
@@ -303,8 +336,12 @@ export function loadFontInfo(context: PDFContext, fontObj: PDFObject | undefined
       unicode: (c) => cmap?.map.get(c) ?? '',
       width: (c) => widths.get(c) ?? dw,
       isSpace: () => false,
-      // Without ToUnicode a CID font's text can't be decoded.
-      editable: !!cmap && cmap.map.size > 0 && (identity || !!cmap),
+      editable,
+      writable,
+      embedded,
+      subset,
+      codeBytes: 2,
+      allCodes: () => (cmap ? [...cmap.map].filter(([, u]) => Array.from(u).length === 1).map(([c]) => c) : []),
     };
   }
 
@@ -338,12 +375,13 @@ export function loadFontInfo(context: PDFContext, fontObj: PDFObject | undefined
     }
   }
   const symbolic = /symbol|dingbat|wingding|webding/i.test(baseName);
+  const unicode = (c: number) => cmap?.map.get(c) ?? diffs.get(c) ?? base(c);
 
   return {
     baseName,
     style,
     codes: (bytes) => bytes,
-    unicode: (c) => cmap?.map.get(c) ?? diffs.get(c) ?? base(c),
+    unicode,
     width: (c) => {
       const w = widths[c - firstChar];
       if (w != null) return w;
@@ -359,6 +397,15 @@ export function loadFontInfo(context: PDFContext, fontObj: PDFObject | undefined
     },
     isSpace: (c) => c === 32,
     editable: !symbolic,
+    writable: !symbolic,
+    embedded,
+    subset,
+    codeBytes: 1,
+    allCodes: () => {
+      const out: number[] = [];
+      for (let c = 0; c < 256; c++) if (Array.from(unicode(c)).length === 1) out.push(c);
+      return out;
+    },
   };
 }
 
@@ -392,5 +439,10 @@ function unknownFont(baseName: string): FontInfo {
     width: () => 500,
     isSpace: (c) => c === 32,
     editable: false,
+    writable: false,
+    embedded: false,
+    subset: false,
+    codeBytes: 1,
+    allCodes: () => [],
   };
 }

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { cssBaselineOffset, paragraphsToHtml, readParagraphs } from '../edit/dom';
-import { CSS_FAMILY } from '../edit/metrics';
+import { cssFontStack, frameFont } from '../edit/faces';
+import { useFontLibraryVersion } from '../hooks/useFontLibrary';
 import { cssColor } from '../edit/model';
 import type { ActiveEdit } from '../hooks/usePdfEditor';
 import { useEditor } from './context';
@@ -58,13 +59,16 @@ export function InlineEditor({ active, s, toCss, caretAt, maxRight }: InlineEdit
   const textRef = useRef<HTMLDivElement>(null);
   const savedRange = useRef<Range | null>(null);
   const { frame } = active;
+  const frameRef = useRef(frame);
+  frameRef.current = frame;
   const tools = useToolbarConfig();
+  useFontLibraryVersion(); // font stacks name library fonts once they are registered
 
   // Fill once per frame; afterwards the DOM is owned by the browser.
   useLayoutEffect(() => {
     const el = textRef.current;
     if (!el) return;
-    el.innerHTML = paragraphsToHtml(frame.paragraphs);
+    el.innerHTML = paragraphsToHtml(frame.paragraphs, (font) => cssFontStack(frame, font));
     try {
       document.execCommand('defaultParagraphSeparator', false, 'div');
       document.execCommand('styleWithCSS', false, 'true');
@@ -101,9 +105,10 @@ export function InlineEditor({ active, s, toCss, caretAt, maxRight }: InlineEdit
 
   // Register the imperative API used by the format bar and by commit.
   const frameColor = frame.color;
+  const defaultFont = frameFont(frame);
   useEffect(() => {
     inlineEditorRef.current = {
-      read: () => (textRef.current ? readParagraphs(textRef.current, frameColor) : frame.paragraphs),
+      read: () => (textRef.current ? readParagraphs(textRef.current, frameColor, defaultFont) : frame.paragraphs),
       focus: () => textRef.current?.focus({ preventScroll: true }),
       exec: (command, value) => {
         const el = textRef.current;
@@ -116,11 +121,32 @@ export function InlineEditor({ active, s, toCss, caretAt, maxRight }: InlineEdit
         }
         document.execCommand(command, false, value);
       },
+      setFont: (font) => {
+        const el = textRef.current;
+        if (!el) return;
+        el.focus({ preventScroll: true });
+        const sel = window.getSelection();
+        if (savedRange.current && sel) {
+          sel.removeAllRanges();
+          sel.addRange(savedRange.current);
+        }
+        const range = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+        if (!range || range.collapsed || !el.contains(range.commonAncestorContainer)) {
+          // Nothing selected: the whole box changes font.
+          el.querySelectorAll<HTMLElement>('[style]').forEach((n) => n.style.removeProperty('font-family'));
+          el.querySelectorAll('font[face]').forEach((n) => n.removeAttribute('face'));
+          updateActiveFrame({ font });
+          markActiveChanged();
+          return;
+        }
+        document.execCommand('fontName', false, cssFontStack(frameRef.current, font));
+        markActiveChanged();
+      },
     };
     return () => {
       inlineEditorRef.current = null;
     };
-  }, [inlineEditorRef, frameColor, frame.paragraphs]);
+  }, [inlineEditorRef, frameColor, defaultFont, frame.paragraphs, updateActiveFrame, markActiveChanged]);
 
   // Clicking anywhere else commits, like leaving a text box in a word processor.
   useEffect(() => {
@@ -171,7 +197,7 @@ export function InlineEditor({ active, s, toCss, caretAt, maxRight }: InlineEdit
     width: frame.width * s,
   };
   const textStyle: CSSProperties = {
-    fontFamily: CSS_FAMILY[frame.family],
+    fontFamily: cssFontStack(frame, defaultFont),
     fontSize: fontPx,
     lineHeight: `${lineHeightPx}px`,
     color: cssColor(frame.color),

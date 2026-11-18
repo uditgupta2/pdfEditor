@@ -6,11 +6,37 @@ export type RGB = [number, number, number];
 export type FamilyClass = 'sans' | 'serif' | 'mono';
 export type Align = 'left' | 'center' | 'right' | 'justify';
 
+/**
+ * Which font text is written in:
+ * - `pdf:<key>`: a font of the page itself, by its resource name (see `TextFrame.fonts`)
+ * - `lib:<id>`: a font file the app provides (see `EditorFont`)
+ * - `std:<family>`: Helvetica, Times or Courier
+ * Bold and italic come from the span; the matching face is picked when the text is laid out.
+ */
+export type FontChoice = string;
+
+/** A font of the PDF page that new text can be written in, by its resource name. */
+export interface PdfFont {
+  /** Font name without the subset prefix, e.g. `Calibri-Bold`. */
+  name: string;
+  /** Family name for display and for finding bold/italic siblings, e.g. `Calibri`. */
+  familyName: string;
+  family: FamilyClass;
+  bold: boolean;
+  italic: boolean;
+  /** Bytes per character code in a string (1 for simple fonts, 2 for Identity-H). */
+  codeBytes: 1 | 2;
+  /** Characters the font can draw: character → [code, advance width in 1/1000 em]. */
+  glyphs: Record<string, [code: number, width: number]>;
+}
+
 export interface SpanStyle {
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
   color?: RGB;
+  /** Font for this span; defaults to the frame's `font`. */
+  font?: FontChoice;
 }
 
 export interface Span extends SpanStyle {
@@ -35,7 +61,12 @@ export interface TextFrame {
   size: number;
   /** Baseline-to-baseline distance in points. */
   lineHeight: number;
+  /** Closest standard family: the fallback when a font lacks a character. */
   family: FamilyClass;
+  /** Default font of the frame's text. Without it, the standard font for `family`. */
+  font?: FontChoice;
+  /** Page fonts the frame's text may use, by resource name (`pdf:<key>` choices). */
+  fonts?: Record<string, PdfFont>;
   color: RGB;
   align: Align;
   paragraphs: Paragraph[];

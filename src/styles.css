@@ -779,6 +779,25 @@
 .rpe-formatbar-scroll > * {
   flex-shrink: 0;
 }
+.rpe-font-picker {
+  height: 36px;
+  max-width: 180px;
+  margin-left: 4px;
+  padding: 0 8px;
+  border: 1px solid var(--rpe-border);
+  border-radius: var(--rpe-radius);
+  background: var(--rpe-surface);
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+}
+.rpe-font-picker:focus-visible {
+  outline: 2px solid var(--rpe-accent);
+  outline-offset: 1px;
+}
+.rpe-font-picker:disabled {
+  opacity: 0.5;
+}
 .rpe-stepper {
   display: inline-flex;
   align-items: stretch;
@@ -828,7 +847,8 @@
   outline: none;
 }
 @media (pointer: coarse) {
-  .rpe-stepper {
+  .rpe-stepper,
+  .rpe-font-picker {
     height: 44px;
   }
   .rpe-stepper-btn {
@@ -951,6 +971,12 @@
   white-space: pre;
   font-kerning: none;
   font-variant-ligatures: none;
+}
+/* The page bitmap already shows this text in its real fonts; the HTML copy
+   stays for clicking, selecting and copying. */
+.rpe-frame.is-baked .rpe-frag {
+  color: transparent !important;
+  text-decoration-color: transparent;
 }
 
 .rpe-cover {

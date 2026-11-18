@@ -139,6 +139,7 @@ To open a file yourself, pass `file`. It accepts a `File`, `Blob`,
 | `onError` | `(error: PdfEditorError) => void` | none | See [error codes](#error-codes) |
 | `onPasswordRequest` | `({ reason, fileName }) => string \| null \| Promise<…>` | built-in dialog | Supply a password for encrypted files; return `null` to cancel |
 | `onUnresolvedContent` | `({ fileName, pages, streams }) => 'keep' \| 'remove' \| null \| Promise<…>` | built-in dialog | Decide what happens to content the editor can't read on edited pages; return `null` to cancel the save. See [Unreadable content](#unreadable-content) |
+| `fonts` | `EditorFont[]` | none | Extra fonts for the font picker, and stand-ins for the document's own fonts. See [Fonts](#fonts) |
 | `toolbarExtras` | `ReactNode` | none | Extra content rendered in the toolbar |
 | `emptyState` | `ReactNode` | none | Replaces the upload screen shown when no file is open |
 
@@ -169,7 +170,7 @@ banner appears. Use `isPdfEditorError(err)` to narrow unknown errors.
 | Bar | Names |
 |---|---|
 | Main toolbar | `'sidebar'`, `'open'`, `'fileName'`, `'pageNav'`, `'zoom'`, `'edit'`, `'download'`, `'save'` |
-| Formatting bar (Edit mode) | `'undo'`, `'redo'`, `'fontSize'`, `'bold'`, `'italic'`, `'underline'`, `'textColor'`, `'alignment'`, `'deleteText'` |
+| Formatting bar (Edit mode) | `'undo'`, `'redo'`, `'fontFamily'`, `'fontSize'`, `'bold'`, `'italic'`, `'underline'`, `'textColor'`, `'alignment'`, `'deleteText'` |
 
 ```tsx
 // Simple editing: size, bold and italic only
@@ -224,7 +225,7 @@ Click **Edit** in the toolbar, then:
 
 - **Click any paragraph** to edit it in place, like a word processor. Text rewraps as you type, Enter starts a new paragraph, and Ctrl/⌘+B / I / U work.
 - **Click an empty spot** to add new text there.
-- Use the formatting bar for size, bold, italic, underline, colour and alignment (left, centre, right or justify).
+- Use the formatting bar for font, size, bold, italic, underline, colour and alignment (left, centre, right or justify). The font applies to the selected text, or to the whole box when nothing is selected.
 - Drag the handle above the box to move it, and the side handle to change its width.
 - **Undo/redo:** Ctrl/⌘+Z and Ctrl/⌘+Shift+Z.
 - Inside the box, Escape cancels and Ctrl/⌘+Enter or clicking elsewhere confirms.
@@ -244,9 +245,52 @@ While a paragraph is open, the editor reads the page pixels around it to match
 the background colour. That hides the old text immediately, before the page is
 re-rendered without it.
 
+### Fonts
+
+Edited text keeps the **document's own font**: the new text is written with the
+font already in the PDF, so it looks and measures exactly like the original.
+
+Most PDFs embed fonts as subsets, which only contain the characters the
+document uses. A character the subset lacks (say, a "Q" in a document that never
+used one) is set in a fallback, character by character:
+
+1. a bold/italic face of the same family on the page, for bold or italic text;
+2. the font's **stand-in** from `fonts`, if you provide one (see below);
+3. Helvetica, Times or Courier, whichever is closest.
+
+While you type, the screen shows the original font only if it is installed on
+the computer (otherwise a similar font). Once you confirm, the page is
+re-rendered from the PDF itself, so you see the real result.
+
+The **font picker** lists the document's fonts, the fonts you provide, and
+Helvetica, Times and Courier.
+
+```tsx
+import { PdfEditor, standInFonts } from 'react-pdf-editor-kit';
+
+<PdfEditor
+  fonts={[
+    // Offered in the picker. Bold/italic files are optional.
+    { id: 'inter', label: 'Inter', regular: '/fonts/Inter-Regular.ttf', bold: '/fonts/Inter-Bold.ttf' },
+    // Carlito for Calibri, Caladea for Cambria, Arimo for Arial/Helvetica,
+    // Tinos for Times New Roman, Cousine for Courier New (self-hosted .ttf files).
+    ...standInFonts('/fonts/'),
+  ]}
+/>
+```
+
+`EditorFont` fields: `id`, `label`, `regular` (URL or bytes), optional `bold`,
+`italic`, `boldItalic`, `family` (`'sans' | 'serif' | 'mono'`, the fallback),
+`replaces` (PDF family names it stands in for, e.g. `['Calibri']`) and `hidden`
+(stand-in only, not in the picker). Font files load on first use and are
+embedded as subsets on export. TrueType (`.ttf`) works best. The font's own
+embedding flags (`OS/2.fsType`) are respected: a font marked as not embeddable
+(Restricted License, or bitmap-only) is not loaded, and its text uses the
+fallback standard font; a font marked "no subsetting" is embedded whole.
+
 ### Current limitations
 
-- **Fonts:** edited paragraphs are set in Helvetica, Times or Courier, whichever is closest to the original, not the document's own font. There is no font picker yet; it will return once more fonts are supported. Characters outside Western European (WinAnsi) are substituted on export, and you'll see a notice when that happens.
+- **Fonts:** characters outside Western European (WinAnsi) can only be written in the document's fonts or fonts you provide. Otherwise they are substituted on export, and you'll see a notice. A document font that the PDF doesn't encode simply (non-Identity CID encodings) falls back to the closest standard font.
 - **Not editable yet:**
   - text inside form XObjects
   - Type3 fonts

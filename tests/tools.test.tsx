@@ -42,7 +42,11 @@ describe('formatting tools in toolbarOptions', () => {
     for (const name of ['Undo (Ctrl+Z)', 'Bold (Ctrl+B)', 'Italic (Ctrl+I)', 'Underline (Ctrl+U)', 'Text colour', 'Align left', 'Delete text'])
       expect(screen.getByLabelText(name)).toBeTruthy();
     expect(screen.getByLabelText('Font size in points')).toBeTruthy();
-    // The font picker is not part of the first release.
+    expect(screen.getByLabelText('Font')).toBeTruthy();
+  });
+
+  it('hides the font picker when fontFamily is not listed', () => {
+    setup(<FormatBar />, ['fontSize', 'bold']);
     expect(screen.queryByLabelText('Font')).toBeNull();
   });
 

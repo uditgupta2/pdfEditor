@@ -2,7 +2,8 @@ import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import type { PDFDocument } from 'pdf-lib';
 import { assetUrls, getPdfjs, type PdfjsOptions } from '../render/pdfjs';
 import type { PageAnalysis } from './extract';
-import type { DocumentEdits } from './model';
+import { fontLibrary } from './fontLibrary';
+import type { DocumentEdits, PageEdits } from './model';
 
 type Engine = typeof import('./engine');
 
@@ -29,6 +30,25 @@ function joinList(items: string[]) {
 
 export function removalKey(removed: string[] | undefined) {
   return removed && removed.length ? hash([...removed].sort().join('|')) : 'original';
+}
+
+const renderKeys = new WeakMap<PageEdits, { fonts: number; key: string }>();
+
+/**
+ * Identifies how a page should look with its edits: which original text is
+ * removed and which frames are drawn. `'original'` when there is nothing to change.
+ */
+export function pageRenderKey(edits: PageEdits | undefined): string {
+  if (!edits || (!edits.removedRuns.length && !edits.frames.length)) return 'original';
+  // Fonts arriving can change how frames are drawn.
+  const fonts = edits.frames.length ? fontLibrary.getVersion() : 0;
+  const cached = renderKeys.get(edits);
+  if (cached?.fonts === fonts) return cached.key;
+  // The screen-only cover colour doesn't change the rendered page.
+  const frames = JSON.stringify(edits.frames.map(({ cover: _cover, ...f }) => f));
+  const key = `${removalKey(edits.removedRuns)}-${hash(frames)}-${fonts}`;
+  renderKeys.set(edits, { fonts, key });
+  return key;
 }
 
 /**
@@ -87,9 +107,9 @@ export class EditSession {
     return p;
   }
 
-  /** The page rendered without the removed runs (cached per removal set). */
-  async renderPage(pageIndex: number, removed: string[]): Promise<PDFPageProxy> {
-    const key = removalKey(removed);
+  /** The page with its edits applied: removed text gone, frames drawn (cached per `pageRenderKey`). */
+  async renderPage(pageIndex: number, edits: PageEdits): Promise<PDFPageProxy> {
+    const key = pageRenderKey(edits);
     const existing = this.renders.get(pageIndex);
     if (existing?.key === key) return (await existing.doc).getPage(1);
     const docP = (async () => {
@@ -99,7 +119,7 @@ export class EditSession {
         this.analyze(pageIndex),
         getPdfjs(this.options),
       ]);
-      const bytes = await engine.buildPageWithoutRuns(doc, pageIndex, analysis, removed);
+      const bytes = await engine.buildEditedPage(doc, pageIndex, analysis, edits);
       return pdfjs.getDocument({ data: bytes, ...assetUrls(pdfjs, this.options.assetsBaseUrl) }).promise;
     })();
     this.renders.set(pageIndex, { key, doc: docP });

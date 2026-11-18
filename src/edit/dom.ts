@@ -1,10 +1,15 @@
+import { choiceFromCss } from './faces';
 import { CSS_FONT_METRICS } from './metrics';
-import { cssColor, parseCssColor, type FamilyClass, type Paragraph, type RGB, type Span } from './model';
+import { cssColor, parseCssColor, type FamilyClass, type FontChoice, type Paragraph, type RGB, type Span } from './model';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const escAttr = (s: string) => esc(s).replace(/"/g, '&quot;');
 
-/** Model → HTML for the contenteditable editor. One <div> per paragraph. */
-export function paragraphsToHtml(paragraphs: Paragraph[]): string {
+/**
+ * Model → HTML for the contenteditable editor. One <div> per paragraph.
+ * `fontCss` gives the CSS font-family list of a span's font (see `cssFontStack`).
+ */
+export function paragraphsToHtml(paragraphs: Paragraph[], fontCss?: (font: FontChoice) => string): string {
   return paragraphs
     .map((p) => {
       const inner = p.spans
@@ -15,7 +20,8 @@ export function paragraphsToHtml(paragraphs: Paragraph[]): string {
           if (s.italic) css.push('font-style:italic');
           if (s.underline) css.push('text-decoration:underline');
           if (s.color) css.push(`color:${cssColor(s.color)}`);
-          return css.length ? `<span style="${css.join(';')}">${esc(s.text)}</span>` : esc(s.text);
+          if (s.font && fontCss) css.push(`font-family:${fontCss(s.font)}`);
+          return css.length ? `<span style="${escAttr(css.join(';'))}">${esc(s.text)}</span>` : esc(s.text);
         })
         .join('');
       return `<div>${inner || '<br>'}</div>`;
@@ -28,8 +34,24 @@ const BLOCK_TAGS = new Set(['DIV', 'P', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6'
 const sameColor = (a?: RGB, b?: RGB) =>
   (!a && !b) || (!!a && !!b && a.every((v, i) => Math.abs(v - b[i]!) < 0.004));
 
-/** contenteditable DOM → model. Handles Chrome (<div>), Firefox (<br>) and pasted markup. */
-export function readParagraphs(root: HTMLElement, frameColor: RGB): Paragraph[] {
+/** The font choice of `el`'s text: the nearest font-family that names one, up to `root`. */
+export function fontChoiceOf(el: HTMLElement, root: HTMLElement): FontChoice | undefined {
+  for (let n: HTMLElement | null = el; n; n = n === root ? null : n.parentElement) {
+    const choice = n.style?.fontFamily ? choiceFromCss(n.style.fontFamily) : undefined;
+    if (choice) return choice;
+    if (n.tagName === 'FONT' && n.getAttribute('face')) {
+      const fromFace = choiceFromCss(n.getAttribute('face')!);
+      if (fromFace) return fromFace;
+    }
+  }
+  return choiceFromCss(getComputedStyle(el).fontFamily);
+}
+
+/**
+ * contenteditable DOM → model. Handles Chrome (<div>), Firefox (<br>) and pasted markup.
+ * Text in `frameFont` (the font of the editor box itself) gets no `font` of its own.
+ */
+export function readParagraphs(root: HTMLElement, frameColor: RGB, frameFont?: FontChoice): Paragraph[] {
   const paragraphs: Paragraph[] = [];
   let current: Span[] = [];
   let pendingBreak = false;
@@ -50,6 +72,8 @@ export function readParagraphs(root: HTMLElement, frameColor: RGB): Paragraph[] 
       if (cs.fontStyle === 'italic' || cs.fontStyle === 'oblique') span.italic = true;
       if (underline) span.underline = true;
       if (color && !sameColor(color, frameColor)) span.color = color;
+      const font = fontChoiceOf(el, root);
+      if (font && font !== frameFont) span.font = font;
       current.push(span);
       pendingBreak = false;
       return;
@@ -83,7 +107,14 @@ export function readParagraphs(root: HTMLElement, frameColor: RGB): Paragraph[] 
     const merged: Span[] = [];
     for (const s of p.spans) {
       const last = merged[merged.length - 1];
-      if (last && !!last.bold === !!s.bold && !!last.italic === !!s.italic && !!last.underline === !!s.underline && sameColor(last.color, s.color)) {
+      if (
+        last &&
+        !!last.bold === !!s.bold &&
+        !!last.italic === !!s.italic &&
+        !!last.underline === !!s.underline &&
+        last.font === s.font &&
+        sameColor(last.color, s.color)
+      ) {
         last.text += s.text;
       } else merged.push({ ...s });
     }

@@ -230,7 +230,9 @@ describe('drawn underlines', () => {
     const blockOf = (t: string) => a.blocks.find((b) => b.lines[0]!.text.startsWith(t))!;
 
     const terms = blockOf('Terms');
-    expect(terms.paragraphs[0]!.spans).toEqual([{ text: 'Terms apply', bold: false, italic: false, underline: true }]);
+    expect(terms.paragraphs[0]!.spans).toEqual([
+      { text: 'Terms apply', bold: false, italic: false, underline: true, font: expect.stringMatching(/^pdf:F1/) },
+    ]);
     expect(terms.runIds.filter((id) => id.includes(':g'))).toHaveLength(1);
 
     const visit = blockOf('Visit');

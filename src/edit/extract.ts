@@ -1,6 +1,7 @@
 import { PDFDict, PDFName, type PDFContext, type PDFObject, type PDFPage } from 'pdf-lib';
 import { parseContentStream, type Operand, type Operation } from './contentStream';
-import { loadFontInfo, resolve, streamText, type FontInfo, type FontStyle } from './fonts';
+import { fontFamilyName, loadFontInfo, resolve, streamText, stripSubset, type FontInfo, type FontStyle } from './fonts';
+import type { PdfFont } from './model';
 
 type Matrix = [number, number, number, number, number, number];
 const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0];
@@ -77,6 +78,8 @@ export interface StyledSpan {
   italic?: boolean;
   underline?: boolean;
   color?: RGB;
+  /** `pdf:<key>` when the span's page font can be written with. */
+  font?: string;
 }
 
 export interface Paragraph {
@@ -98,6 +101,8 @@ export interface TextBlock {
   size: number;
   lineHeight: number;
   family: FontStyle['family'];
+  /** Most used writable page font (`pdf:<key>`), if any. */
+  font?: string;
   color: RGB;
   align: Align;
   editable: boolean;
@@ -117,6 +122,8 @@ export interface PageAnalysis {
    * so rewriting the page can put the original stream back in the same place.
    */
   unresolved: number[];
+  /** Page fonts new text can be written in, by resource name, with the characters each can draw. */
+  fonts: Record<string, PdfFont>;
 }
 
 /** PDF comment line standing in for an undecodable content stream. */
@@ -208,6 +215,7 @@ export function analyzePage(page: PDFPage, pageIndex: number): PageAnalysis {
   };
 
   const runs: TextRun[] = [];
+  const usedCodes = new Map<string, Set<number>>();
   const stack: GState[] = [];
   let gs: GState = { ctm: IDENTITY, fill: [0, 0, 0], lineWidth: 1 };
   const graphics: GraphicItem[] = [];
@@ -279,6 +287,9 @@ export function analyzePage(page: PDFPage, pageIndex: number): PageAnalysis {
       }
       if (item.type !== 'str') continue;
       const codes = font.codes(item.bytes);
+      let used = usedCodes.get(fontKey);
+      if (!used) usedCodes.set(fontKey, (used = new Set()));
+      for (const c of codes) used.add(c);
       const charX: TextRun['charX'] = [];
       let text = '';
       let advance = 0;
@@ -448,8 +459,46 @@ export function analyzePage(page: PDFPage, pageIndex: number): PageAnalysis {
     }
   });
 
-  const blocks = groupBlocks(runs.filter((r) => r.text.trim().length > 0 || r.text.length > 0), graphics, pageIndex);
-  return { runs, graphics, blocks, content, ops, unresolved };
+  const fonts = writableFonts(fontCache, usedCodes);
+  const fontOf = (r: TextRun) => (fonts[r.fontKey] ? `pdf:${r.fontKey}` : undefined);
+  const blocks = groupBlocks(runs.filter((r) => r.text.trim().length > 0 || r.text.length > 0), graphics, pageIndex, fontOf);
+  return { runs, graphics, blocks, content, ops, unresolved, fonts };
+}
+
+/**
+ * The page fonts new text can be written in, and which characters each can
+ * draw. A subset font only contains the glyphs the document uses, so only
+ * codes seen on this page count; a complete (or non-embedded) font can draw
+ * every character its encoding maps.
+ */
+function writableFonts(cache: Map<string, FontInfo>, usedCodes: Map<string, Set<number>>): Record<string, PdfFont> {
+  const out: Record<string, PdfFont> = {};
+  for (const [key, info] of cache) {
+    if (!info.writable || !info.editable) continue;
+    const used = usedCodes.get(key) ?? new Set<number>();
+    // Codes the page uses come first, so they win when two codes map to one character.
+    const candidates = info.embedded && info.subset ? [...used] : [...new Set([...used, ...info.allCodes()])];
+    const glyphs: PdfFont['glyphs'] = {};
+    for (const code of candidates) {
+      const ch = info.unicode(code);
+      if (Array.from(ch).length !== 1 || ch < ' ' || glyphs[ch]) continue;
+      const w = info.width(code);
+      // An unused code with no width in an embedded font is most likely a missing glyph.
+      if (info.embedded && !used.has(code) && !(w > 0) && ch !== ' ') continue;
+      glyphs[ch] = [code, w];
+    }
+    if (!Object.keys(glyphs).length) continue;
+    out[key] = {
+      name: stripSubset(info.baseName),
+      familyName: fontFamilyName(info.baseName),
+      family: info.style.family,
+      bold: info.style.bold,
+      italic: info.style.italic,
+      codeBytes: info.codeBytes,
+      glyphs,
+    };
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -496,13 +545,28 @@ function buildLines(runs: TextRun[]): TextLine[] {
  * whose centre lies inside one of `underlines` (page-space x ranges) get the
  * underline style, so a run can split into several spans.
  */
-function joinRuns(runs: TextRun[], underlines: [number, number][] = []): (StyledSpan & { run: TextRun })[] {
+function joinRuns(
+  runs: TextRun[],
+  underlines: [number, number][] = [],
+  fontOf: (r: TextRun) => string | undefined = () => undefined,
+): (StyledSpan & { run: TextRun })[] {
   const under = (x: number) => underlines.some(([a, b]) => x >= a - 0.5 && x <= b + 0.5);
   const out: (StyledSpan & { run: TextRun })[] = [];
   const push = (r: TextRun, text: string, underline: boolean) => {
     const last = out[out.length - 1];
     if (last && last.run === r && !!last.underline === underline) last.text += text;
-    else out.push({ text, bold: r.style.bold, italic: r.style.italic, ...(underline ? { underline } : {}), color: r.color, run: r });
+    else {
+      const font = fontOf(r);
+      out.push({
+        text,
+        bold: r.style.bold,
+        italic: r.style.italic,
+        ...(underline ? { underline } : {}),
+        color: r.color,
+        ...(font ? { font } : {}),
+        run: r,
+      });
+    }
   };
   let prev: TextRun | null = null;
   for (const r of runs) {
@@ -566,6 +630,7 @@ function mergeSpans(spans: StyledSpan[]): StyledSpan[] {
       !!last.bold === !!s.bold &&
       !!last.italic === !!s.italic &&
       !!last.underline === !!s.underline &&
+      last.font === s.font &&
       sameColor(last.color, s.color)
     ) {
       last.text += s.text;
@@ -574,7 +639,12 @@ function mergeSpans(spans: StyledSpan[]): StyledSpan[] {
   return out;
 }
 
-function groupBlocks(runs: TextRun[], graphics: GraphicItem[], pageIndex: number): TextBlock[] {
+function groupBlocks(
+  runs: TextRun[],
+  graphics: GraphicItem[],
+  pageIndex: number,
+  fontOf: (r: TextRun) => string | undefined,
+): TextBlock[] {
   const lines = buildLines(runs).sort((a, b) => b.baseline - a.baseline || a.x0 - b.x0);
   const underlineMatches = matchUnderlines(lines, graphics);
   const groups: TextLine[][] = [];
@@ -617,13 +687,13 @@ function groupBlocks(runs: TextRun[], graphics: GraphicItem[], pageIndex: number
   }
 
   return groups.map((g, gi) => {
-    const block = toBlock(g, `${pageIndex}:b${gi}`);
+    const block = toBlock(g, `${pageIndex}:b${gi}`, fontOf);
     block.runIds.push(...graphicIds[gi]!);
     return block;
   });
 }
 
-function toBlock(lines: TextLine[], id: string): TextBlock {
+function toBlock(lines: TextLine[], id: string, fontOf: (r: TextRun) => string | undefined): TextBlock {
   const x0 = Math.min(...lines.map((l) => l.x0));
   const x1 = Math.max(...lines.map((l) => l.x1));
   const size = median(lines.map((l) => l.size));
@@ -652,7 +722,7 @@ function toBlock(lines: TextLine[], id: string): TextBlock {
   const paragraphs: Paragraph[] = [];
   let current: StyledSpan[] = [];
   lines.forEach((line, i) => {
-    const spans = joinRuns(line.runs, line.underlines).map(({ run: _run, ...s }) => s);
+    const spans = joinRuns(line.runs, line.underlines, fontOf).map(({ run: _run, ...s }) => s);
     if (i > 0) {
       const prev = lines[i - 1]!;
       const firstWord = line.runs[0]!.charX;
@@ -707,6 +777,14 @@ function toBlock(lines: TextLine[], id: string): TextBlock {
   // Spans that match the block colour don't need their own colour.
   for (const p of paragraphs) for (const s of p.spans) if (sameColor(s.color, color)) delete s.color;
 
+  // The font used for most characters becomes the frame's default font.
+  const fontCounts = new Map<string, number>();
+  for (const r of allRuns) {
+    const f = fontOf(r);
+    if (f) fontCounts.set(f, (fontCounts.get(f) ?? 0) + r.text.length);
+  }
+  const font = [...fontCounts].sort((a, b) => b[1] - a[1])[0]?.[0];
+
   const first = lines[0]!;
   const last = lines[lines.length - 1]!;
   return {
@@ -722,6 +800,7 @@ function toBlock(lines: TextLine[], id: string): TextBlock {
     size,
     lineHeight,
     family,
+    ...(font ? { font } : {}),
     color,
     align,
     editable: allRuns.every((r) => r.editable),

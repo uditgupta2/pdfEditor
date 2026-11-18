@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, type MutableRefObject } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { PdfEditorError, isPdfEditorError } from '../core/errors';
 import { normalizePdfInput, DEFAULT_MAX_FILE_SIZE, type PdfInput } from '../core/load';
 import { nextZoomStep, type PageSize, type ZoomValue } from '../core/zoom';
 import { assetUrls, getPdfjs, type PdfjsOptions } from '../render/pdfjs';
 import { EditSession } from '../edit/session';
-import { hasEdits, type DocumentEdits, type PageEdits, type TextFrame } from '../edit/model';
+import { fontLibrary, type EditorFont } from '../edit/fontLibrary';
+import { hasEdits, type DocumentEdits, type FontChoice, type PageEdits, type TextFrame } from '../edit/model';
 
 export interface FileLoadMeta {
   name: string;
@@ -68,6 +69,11 @@ export interface UsePdfEditorOptions extends PdfjsOptions {
   onUnresolvedContent?(
     info: UnresolvedContentInfo,
   ): Promise<UnresolvedContentChoice | null> | UnresolvedContentChoice | null;
+  /**
+   * Fonts users can pick for edited text, and stand-ins for the document's own
+   * fonts (see `EditorFont.replaces` and `standInFonts`). Files load on first use.
+   */
+  fonts?: readonly EditorFont[];
 }
 
 export type EditorStatus = 'empty' | 'loading' | 'ready';
@@ -91,6 +97,8 @@ export interface ActiveEdit {
 /** Imperative handle registered by the live inline editor. */
 export interface InlineEditorApi {
   exec(command: 'bold' | 'italic' | 'underline' | 'foreColor', value?: string): void;
+  /** Set the font of the selected text, or of the whole box when nothing is selected. */
+  setFont(font: FontChoice): void;
   /** Read paragraphs from the DOM. */
   read(): TextFrame['paragraphs'];
   focus(): void;
@@ -317,9 +325,9 @@ async function readPageSizes(doc: PDFDocumentProxy): Promise<PageSize[]> {
 
 /** Stable text+style signature used to tell whether an edit changed anything. */
 export function frameSignature(
-  f: Pick<TextFrame, 'paragraphs' | 'family' | 'size' | 'align' | 'color' | 'x' | 'baseline' | 'width'>,
+  f: Pick<TextFrame, 'paragraphs' | 'family' | 'font' | 'size' | 'align' | 'color' | 'x' | 'baseline' | 'width'>,
 ) {
-  return JSON.stringify([f.paragraphs, f.family, f.size, f.align, f.color, f.x, f.baseline, f.width]);
+  return JSON.stringify([f.paragraphs, f.family, f.font ?? null, f.size, f.align, f.color, f.x, f.baseline, f.width]);
 }
 
 function pageEdits(edits: DocumentEdits, page: number): PageEdits {
@@ -444,6 +452,10 @@ export function usePdfEditor(options: UsePdfEditorOptions = {}): PdfEditorContro
   const [state, dispatch] = useReducer(reducer, options.initialZoom ?? 'auto', initialState);
   const optionsRef = useRef(options);
   optionsRef.current = options;
+  // Unchanged fonts are ignored, so an inline array doesn't cause extra work.
+  useLayoutEffect(() => {
+    if (options.fonts) fontLibrary.register(options.fonts);
+  }, [options.fonts]);
   const loadIdRef = useRef(0);
   const docRef = useRef<PDFDocumentProxy | null>(null);
   const scaleRef = useRef(state.scale);

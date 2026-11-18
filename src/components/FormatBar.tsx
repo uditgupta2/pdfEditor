@@ -1,5 +1,9 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
-import { hexColor, parseCssColor, type Align } from '../edit/model';
+import { fontChoiceOf } from '../edit/dom';
+import { STD_LABELS, choiceLabel, frameFont, parseChoice } from '../edit/faces';
+import { fontLibrary } from '../edit/fontLibrary';
+import { hexColor, parseCssColor, type Align, type FontChoice, type TextFrame } from '../edit/model';
+import { useFontLibraryVersion } from '../hooks/useFontLibrary';
 import { useEditor } from './context';
 import { KEEP_EDITING_ATTR } from './InlineEditor';
 import { useToolbarConfig, type FormatToolOption } from './toolbarConfig';
@@ -25,19 +29,34 @@ const ICONS = {
   check: svg('M5 12l5 5 9-11'),
 };
 
+/** Font choice of the text at the caret, or undefined outside the editor box. */
+function selectionFont(): FontChoice | undefined {
+  const node = window.getSelection()?.anchorNode;
+  const el = node ? (node instanceof HTMLElement ? node : node.parentElement) : null;
+  const root = el?.closest<HTMLElement>('.rpe-inline-text');
+  return el && root ? fontChoiceOf(el, root) : undefined;
+}
+
 function useSelectionState(enabled: boolean) {
-  const [state, setState] = useState({ bold: false, italic: false, underline: false, color: '#000000' });
+  const [state, setState] = useState<{ bold: boolean; italic: boolean; underline: boolean; color: string; font?: FontChoice }>({
+    bold: false,
+    italic: false,
+    underline: false,
+    color: '#000000',
+  });
   useEffect(() => {
     if (!enabled) return;
     const update = () => {
       try {
         const color = parseCssColor(String(document.queryCommandValue('foreColor')));
-        setState({
+        // Focus moving to a toolbar control doesn't change the text's font.
+        setState((prev) => ({
           bold: document.queryCommandState('bold'),
           italic: document.queryCommandState('italic'),
           underline: document.queryCommandState('underline'),
           color: color ? hexColor(color) : '#000000',
-        });
+          font: selectionFont() ?? prev.font,
+        }));
       } catch {
         /* queryCommandState unsupported */
       }
@@ -149,6 +168,89 @@ function FontSizeStepper({
   );
 }
 
+interface FontOption {
+  value: FontChoice;
+  label: string;
+}
+
+/**
+ * The fonts to offer for a frame: the document's own fonts it uses (one entry
+ * per family, the regular face where there is one), the app's fonts, and the
+ * standard three.
+ */
+export function fontOptions(frame: TextFrame): { label: string; options: FontOption[] }[] {
+  const byFamily = new Map<string, string>();
+  for (const [key, f] of Object.entries(frame.fonts ?? {})) {
+    const current = byFamily.get(f.familyName);
+    const cf = current ? frame.fonts![current]! : null;
+    if (!cf || (cf.bold || cf.italic) > (f.bold || f.italic)) byFamily.set(f.familyName, key);
+  }
+  const groups = [
+    {
+      label: 'In this document',
+      options: [...byFamily].map(([name, key]) => ({ value: `pdf:${key}`, label: `${name} (original)` })),
+    },
+    {
+      label: 'Fonts',
+      options: fontLibrary
+        .list()
+        .filter((f) => !f.hidden)
+        .map((f) => ({ value: `lib:${f.id}`, label: f.label })),
+    },
+    {
+      label: 'Standard',
+      options: (['sans', 'serif', 'mono'] as const).map((f) => ({ value: `std:${f}`, label: STD_LABELS[f] })),
+    },
+  ];
+  return groups.filter((g) => g.options.length);
+}
+
+/** Map a choice to the picker entry that shows it (a bold sibling shows as its family). */
+function pickerValue(frame: TextFrame, choice: FontChoice): FontChoice {
+  const c = parseChoice(choice);
+  if (c?.kind !== 'pdf') return choice;
+  const name = frame.fonts?.[c.value]?.familyName;
+  const option = fontOptions(frame)[0]?.options.find((o) => frame.fonts?.[o.value.slice(4)]?.familyName === name);
+  return option?.value ?? choice;
+}
+
+function FontPicker({
+  frame,
+  current,
+  onChange,
+}: {
+  frame: TextFrame | undefined;
+  current: FontChoice | undefined;
+  onChange(font: FontChoice): void;
+}) {
+  useFontLibraryVersion();
+  const groups = frame ? fontOptions(frame) : [];
+  const value = frame ? pickerValue(frame, current ?? frameFont(frame)) : '';
+  const known = groups.some((g) => g.options.some((o) => o.value === value));
+  return (
+    <select
+      className="rpe-font-picker"
+      aria-label="Font"
+      title="Font"
+      disabled={!frame}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      {!frame && <option value="">Font</option>}
+      {frame && !known && <option value={value}>{choiceLabel(frame, value)}</option>}
+      {groups.map((g) => (
+        <optgroup key={g.label} label={g.label}>
+          {g.options.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
+
 function Btn({
   label,
   onClick,
@@ -212,9 +314,13 @@ export function FormatBar() {
         </Btn>,
       ),
     ],
-    // No font picker yet: edited text keeps the closest standard font to the
-    // original (sans, serif or mono) until custom fonts are supported.
-    [tool('fontSize', <FontSizeStepper size={frame?.size} disabled={!on} onChange={setSize} />)],
+    [
+      tool(
+        'fontFamily',
+        <FontPicker frame={frame} current={sel.font} onChange={(font) => inlineEditorRef.current?.setFont(font)} />,
+      ),
+      tool('fontSize', <FontSizeStepper size={frame?.size} disabled={!on} onChange={setSize} />),
+    ],
     [
       tool(
         'bold',

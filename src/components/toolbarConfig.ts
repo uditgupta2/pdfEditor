@@ -8,6 +8,7 @@ export const MAIN_TOOLBAR_OPTIONS = ['sidebar', 'open', 'fileName', 'pageNav', '
 export const FORMAT_TOOL_OPTIONS = [
   'undo',
   'redo',
+  'fontFamily',
   'fontSize',
   'bold',
   'italic',
