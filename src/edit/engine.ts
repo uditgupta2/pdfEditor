@@ -28,7 +28,7 @@ import {
   type PDFObject,
   type PDFPage,
 } from 'pdf-lib';
-import { loadFacesFor, type Face } from './faces';
+import { loadFacesFor, usesPageFont, type Face } from './faces';
 import { loadFontkit } from './fontLibrary';
 import { binaryToBytes, fmtNum, type Operand, type Operation } from './contentStream';
 import { analyzePage, contentRefs, UNRESOLVED_MARKER_RE, type PageAnalysis, type TextRun } from './extract';
@@ -317,8 +317,10 @@ export async function exportEdited(bytes: Uint8Array, edits: DocumentEdits, opti
 
 /**
  * A one-page PDF containing page `index` with its edits applied: the removed
- * runs gone and the frames drawn, in the same fonts the export uses. The
- * viewer renders it underneath the (then transparent) HTML frames.
+ * runs gone and the frames in the page's own fonts drawn, as the export draws
+ * them. The viewer renders it underneath those (then transparent) HTML frames.
+ * Other frames show correctly as HTML, so they aren't drawn: that saves
+ * re-embedding their fonts on every change.
  */
 export async function buildEditedPage(source: PDFDocument, index: number, analysis: PageAnalysis, edits: PageEdits) {
   const doc = await PDFDocument.create({ updateMetadata: false });
@@ -328,7 +330,8 @@ export async function buildEditedPage(source: PDFDocument, index: number, analys
   if (edits.removedRuns.length) setPageContent(doc, copy!, removeRuns(analysis, new Set(edits.removedRuns)), 'keep');
   const cache: FontCache = new Map();
   const warn: DrawWarnings = { substituted: new Set() };
-  await loadFacesFor(edits.frames);
-  for (const frame of edits.frames) await drawFrame(doc, copy!, frame, cache, warn);
+  const frames = edits.frames.filter(usesPageFont);
+  await loadFacesFor(frames);
+  for (const frame of frames) await drawFrame(doc, copy!, frame, cache, warn);
   return doc.save({ useObjectStreams: false });
 }

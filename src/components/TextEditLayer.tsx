@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { cssBaselineOffset, sampleBackground } from '../edit/dom';
 import type { PageAnalysis, TextBlock } from '../edit/extract';
-import { cssFontStack, frameFont } from '../edit/faces';
+import { cssFontStack, frameFont, usesPageFont } from '../edit/faces';
 import { layoutFrame } from '../edit/layout';
 import { CSS_FONT_METRICS } from '../edit/metrics';
 import { useFontLibraryVersion } from '../hooks/useFontLibrary';
@@ -197,7 +197,7 @@ export function TextEditLayer({ pageIndex, scale, size, baseUpToDate }: TextEdit
             s={s}
             toCss={toCss}
             covered={!baseUpToDate}
-            baked={baseUpToDate}
+            baked={baseUpToDate && usesPageFont(f)}
             interactive={editing}
             onEdit={editFrame}
           />

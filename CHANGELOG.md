@@ -28,6 +28,19 @@ releases may contain breaking changes.
 
 - Picking an app font while editing now shows the text in that font right
   away; before, the font file only loaded once the edit was committed.
+- Stand-in fonts are downloaded only when a character actually needs one;
+  before, any paragraph in a font with a stand-in downloaded it.
+- A font finishing loading redraws only the pages whose text uses it; before,
+  every edited page was rebuilt and re-rendered each time any font loaded.
+- Only text in the document's own fonts is drawn into the re-rendered page;
+  text in app or standard fonts shows as HTML, so editing it no longer rebuilds
+  the page or re-embeds its font on every change.
+- Fonts shared by several pages are parsed once per document instead of once
+  per page.
+- A page preview that fails to build no longer leaks the previous one, and is
+  retried on the next render.
+- Re-registering an app font with new files removes the old face from
+  `document.fonts`.
 
 ### Changed
 

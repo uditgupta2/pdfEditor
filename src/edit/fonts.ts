@@ -301,9 +301,26 @@ export function standardEmbedder(name: string): StandardFontEmbedder {
 // ---------------------------------------------------------------------------
 // Font loading
 
+/**
+ * Font info by font dictionary. Pages that share a font share its dictionary,
+ * so the ToUnicode map is parsed, and the font program decompressed, once per
+ * document rather than once per page. Font dictionaries are never changed in
+ * place, so the cached info stays valid.
+ */
+const fontInfoCache = new WeakMap<PDFDict, FontInfo>();
+
 export function loadFontInfo(context: PDFContext, fontObj: PDFObject | undefined): FontInfo {
   const dict = resolve(context, fontObj);
   if (!(dict instanceof PDFDict)) return unknownFont('Unknown');
+  let info = fontInfoCache.get(dict);
+  if (!info) {
+    info = readFontInfo(context, dict);
+    fontInfoCache.set(dict, info);
+  }
+  return info;
+}
+
+function readFontInfo(context: PDFContext, dict: PDFDict): FontInfo {
   const subtype = nameOf(context, dict.get(PDFName.of('Subtype'))) ?? '';
   const baseName = nameOf(context, dict.get(PDFName.of('BaseFont'))) ?? subtype;
 

@@ -118,6 +118,8 @@ class FontLibrary {
   private fonts = new Map<string, EditorFont>();
   private faces = new Map<string, LoadedFace>();
   private loading = new Map<string, Promise<LoadedFace | null>>();
+  /** Faces added to `document.fonts`, so they can be taken out again when a font's files change. */
+  private browserFaces = new Map<string, FontFace>();
   private listeners = new Set<() => void>();
   private version = 0;
 
@@ -132,8 +134,14 @@ class FontLibrary {
       if (prev) {
         // Different files under the same id: forget what was loaded.
         for (const b of [false, true]) for (const i of [false, true]) {
-          this.faces.delete(faceId(f.id, b, i));
-          this.loading.delete(faceId(f.id, b, i));
+          const id = faceId(f.id, b, i);
+          this.faces.delete(id);
+          this.loading.delete(id);
+          const shown = this.browserFaces.get(id);
+          if (shown) {
+            document.fonts.delete(shown);
+            this.browserFaces.delete(id);
+          }
         }
       }
     }
@@ -162,6 +170,11 @@ class FontLibrary {
   /** Whether the font has a file for this style. */
   hasVariant(fontId: string, bold: boolean, italic: boolean) {
     return !!this.fonts.get(fontId)?.[variantOf(bold, italic)];
+  }
+
+  /** The face if it has loaded, else null. Unlike `face`, never starts a download. */
+  peek(fontId: string, bold: boolean, italic: boolean): LoadedFace | null {
+    return this.faces.get(faceId(fontId, bold, italic)) ?? null;
   }
 
   /** The face if it has loaded; otherwise starts loading it and returns null. */
@@ -200,8 +213,15 @@ class FontLibrary {
           has: (ch) => f.hasGlyphForCodePoint(ch.codePointAt(0)!),
           width: (ch) => f.glyphForCodePoint(ch.codePointAt(0)!).advanceWidth * scale,
         };
-        await showInBrowser(fontId, bold, italic, bytes);
-        if (!sameFont(this.fonts.get(fontId) ?? font, font)) return null; // replaced meanwhile
+        const replaced = () => !sameFont(this.fonts.get(fontId) ?? font, font);
+        if (replaced()) return null;
+        const shown = await browserFace(fontId, bold, italic, bytes);
+        // Registered with new files meanwhile: this face is stale, so the browser never gets it.
+        if (replaced()) return null;
+        if (shown) {
+          document.fonts.add(shown);
+          this.browserFaces.set(id, shown);
+        }
         this.faces.set(id, face);
         this.bump();
         return face;
@@ -230,19 +250,23 @@ class FontLibrary {
   }
 }
 
-/** Register the face with the browser so edited text shows in it. */
-async function showInBrowser(fontId: string, bold: boolean, italic: boolean, bytes: Uint8Array) {
-  if (typeof FontFace === 'undefined' || typeof document === 'undefined' || !document.fonts) return;
+/**
+ * A loaded browser face for the font, so edited text can show in it; the
+ * caller adds it to `document.fonts`. Null where there is no FontFace API
+ * (SSR, tests) or the browser rejects the file.
+ */
+async function browserFace(fontId: string, bold: boolean, italic: boolean, bytes: Uint8Array): Promise<FontFace | null> {
+  if (typeof FontFace === 'undefined' || typeof document === 'undefined' || !document.fonts) return null;
   try {
     const face = new FontFace(libCssFamily(fontId), bytes.slice().buffer, {
       weight: bold ? '700' : '400',
       style: italic ? 'italic' : 'normal',
     });
-    await face.load();
-    document.fonts.add(face);
+    return await face.load();
   } catch (e) {
     // Measuring and exporting still work; the screen falls back to a similar font.
     console.warn('[pdf-editor] the browser could not load a font', e);
+    return null;
   }
 }
 

@@ -1,4 +1,4 @@
-import { faceChain, faceFor, faceWidth, type Face } from './faces';
+import { facePicker, faceWidth, type Face } from './faces';
 import type { RGB, SpanStyle, TextFrame } from './model';
 
 /**
@@ -56,10 +56,10 @@ export function layoutFrame(frame: TextFrame): FrameLayout {
     const glyphs: Glyph[] = [];
     for (const s of para.spans) {
       const { text, ...style } = s;
-      const chain = faceChain(frame, style);
+      const pick = facePicker(frame, style);
       for (const raw of Array.from(text)) {
         const ch = raw === '\t' ? ' ' : raw;
-        glyphs.push({ ...style, ch, face: faceFor(chain, ch) });
+        glyphs.push({ ...style, ch, face: pick(ch) });
       }
     }
 

@@ -1,11 +1,11 @@
 /// <reference types="node" />
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fontkit from '@pdf-lib/fontkit';
 import { PDFDict, PDFDocument, PDFName, StandardFonts } from 'pdf-lib';
 import { analyzePage, exportEdited } from '../src/edit/engine';
-import { faceChain } from '../src/edit/faces';
+import { faceChain, loadFacesFor, preloadChoice } from '../src/edit/faces';
 import { fontFamilyName } from '../src/edit/fonts';
 import { frameFromBlock } from '../src/edit/frames';
 import { layoutFrame } from '../src/edit/layout';
@@ -195,6 +195,31 @@ describe('page preview', () => {
     expect(pageRenderKey(edits)).not.toBe(pageRenderKey({ ...edits, frames: [{ ...frame, x: frame.x + 1 }] }));
     expect(pageRenderKey(edits)).toBe(pageRenderKey({ ...edits, frames: [{ ...frame, cover: [0, 0, 0] }] }));
     expect(pageRenderKey(undefined)).toBe('original');
+  });
+
+  it('leaves frames in app or standard fonts out of the rendered page; they show as HTML', async () => {
+    const { buildEditedPage } = await import('../src/edit/engine');
+    const { pageRenderKey } = await import('../src/edit/session');
+    const { fontLibrary } = await import('../src/edit/fontLibrary');
+    fontLibrary.register([{ id: 'html-only', label: 'HTML only', regular: fixture('LiberationSans-Regular.ttf') }]);
+    await fontLibrary.load('html-only', false, false);
+    const doc = await PDFDocument.create();
+    doc.addPage([400, 300]);
+    const blank = await PDFDocument.load(await doc.save());
+    const base: TextFrame = {
+      id: 'h', x: 40, baseline: 200, width: 300, size: 12, lineHeight: 14, family: 'sans',
+      color: [0, 0, 0], align: 'left', paragraphs: [{ spans: [{ text: 'Not drawn' }] }],
+    };
+    const libFrame = { ...base, font: 'lib:html-only' };
+    const stdFrame = { ...base, id: 's', font: 'std:serif' };
+    const edits = { removedRuns: [], frames: [libFrame, stdFrame] };
+
+    const page = await buildEditedPage(blank, 0, analyzePage(blank.getPage(0), 0), edits);
+    expect(await pdfjsText(page)).toBe('');
+    expect(await fontFileLengths(page)).toEqual([]);
+    // Nothing to draw into the page, so it isn't rebuilt at all, whatever these frames say.
+    expect(pageRenderKey(edits)).toBe('original');
+    expect(pageRenderKey({ removedRuns: [], frames: [{ ...libFrame, x: 99 }] })).toBe('original');
   });
 });
 
@@ -449,5 +474,145 @@ describe('glyphs a subset font program really has', () => {
     // 'H' is drawn on the page but blank in the program: our code → glyph mapping can't be right.
     const glyphs = await glyphList(await simpleTrueTypePdf(withBlankGlyphs(regular(), 'H'), 'Hello'));
     expect(glyphs).toBe('Helo');
+  });
+});
+
+describe('loading fonts only when the text needs them', () => {
+  const ttf = () => fixture('LiberationSans-Regular.ttf');
+  /** Serve every font URL with Liberation Sans, and record which were fetched. */
+  const serveFonts = () => {
+    const fetched: string[] = [];
+    vi.stubGlobal('fetch', async (url: string) => {
+      fetched.push(String(url));
+      return new Response(ttf());
+    });
+    return fetched;
+  };
+  afterEach(() => vi.unstubAllGlobals());
+
+  /**
+   * The library is shared by the whole file, and earlier tests leave a loaded
+   * stand-in for Liberation Sans behind. Re-registering that id with a new
+   * file replaces it and forgets what was loaded.
+   */
+  const standIn = async (url: string) => {
+    const { fontLibrary } = await import('../src/edit/fontLibrary');
+    fontLibrary.register([{ id: 'stand-in', label: 'Stand In', regular: url, replaces: ['Liberation Sans'], hidden: true }]);
+    return fontLibrary;
+  };
+
+  async function helloFrame(text: string) {
+    const a = analyzePage((await PDFDocument.load(await subsetPdf())).getPage(0), 0);
+    const block = a.blocks.find((b) => b.lines[0]!.text === 'Hello world')!;
+    return editedFrame(frameFromBlock(block, a.fonts, undefined), text);
+  }
+  const flush = () => new Promise((r) => setTimeout(r, 50));
+
+  it("doesn't download a stand-in while the page font has every character", async () => {
+    const fetched = serveFonts();
+    await standIn('/lazy-1.ttf');
+    // Only characters the subset has: H e l o w r d and the space.
+    const frame = await helloFrame('Hello world lower world');
+    layoutFrame(frame);
+    await loadFacesFor([frame]);
+    await flush();
+    expect(fetched).toEqual([]);
+  });
+
+  it('downloads the stand-in once a character needs it, then uses it', async () => {
+    const fetched = serveFonts();
+    const fontLibrary = await standIn('/lazy-2.ttf');
+    const frame = await helloFrame('Hello Zed');
+    // First layout: the stand-in isn't there yet, so Z uses the standard font, and the download starts.
+    expect(layoutFrame(frame).lines[0]!.fragments.map((f) => f.face.kind)).toEqual(['pdf', 'std', 'pdf']);
+    await fontLibrary.load('stand-in', false, false);
+    expect(fetched).toEqual(['/lazy-2.ttf']);
+    expect(layoutFrame(frame).lines[0]!.fragments.map((f) => f.face.kind)).toEqual(['pdf', 'lib', 'pdf']);
+  });
+
+  it('keeps the page render key when an unrelated font loads', async () => {
+    const { pageRenderKey } = await import('../src/edit/session');
+    serveFonts();
+    const fontLibrary = await standIn('/lazy-3.ttf');
+    fontLibrary.register([{ id: 'unrelated', label: 'Unrelated', regular: '/unrelated.ttf' }]);
+    const covered = { removedRuns: [], frames: [await helloFrame('Hello world')] };
+    const needsStandIn = { removedRuns: [], frames: [await helloFrame('Hello Zed')] };
+    const before = [pageRenderKey(covered), pageRenderKey(needsStandIn)];
+
+    await fontLibrary.load('unrelated', false, false);
+    expect(pageRenderKey(covered)).toBe(before[0]);
+    expect(pageRenderKey(needsStandIn)).toBe(before[1]);
+
+    // The stand-in the second page needs arrives: only that page is drawn again.
+    await fontLibrary.load('stand-in', false, false);
+    expect(pageRenderKey(covered)).toBe(before[0]);
+    expect(pageRenderKey(needsStandIn)).not.toBe(before[1]);
+  });
+
+  it('preloads a picked app font, but never a page font stand-in', async () => {
+    const fetched = serveFonts();
+    const fontLibrary = await standIn('/lazy-4.ttf');
+    fontLibrary.register([{ id: 'picked', label: 'Picked', regular: '/picked.ttf', bold: '/picked-bold.ttf' }]);
+    const frame = await helloFrame('Hello');
+    preloadChoice(frame.font!);
+    preloadChoice('lib:picked');
+    await flush();
+    expect(fetched.sort()).toEqual(['/picked-bold.ttf', '/picked.ttf']);
+  });
+});
+
+describe('font info and browser faces are not duplicated', () => {
+  it('parses a font shared by several pages once', async () => {
+    const { loadFontInfo } = await import('../src/edit/fonts');
+    const doc = await PDFDocument.create();
+    doc.registerFontkit(fontkit);
+    const font = await doc.embedFont(fixture('LiberationSans-Regular.ttf'), { subset: true });
+    doc.addPage([200, 200]).drawText('One', { x: 10, y: 100, font });
+    doc.addPage([200, 200]).drawText('Two', { x: 10, y: 100, font });
+    const loaded = await PDFDocument.load(await doc.save());
+    const fontOf = (i: number) => {
+      const dict = loaded.getPage(i).node.Resources()!.lookup(PDFName.of('Font'), PDFDict);
+      return loadFontInfo(loaded.context, dict.get(dict.keys()[0]!));
+    };
+    expect(fontOf(1)).toBe(fontOf(0));
+  });
+
+  it('takes a font out of document.fonts when its files change, and never adds a stale one', async () => {
+    const { fontLibrary } = await import('../src/edit/fontLibrary');
+    const added = new Set<object>();
+    vi.stubGlobal(
+      'FontFace',
+      class {
+        constructor(readonly family: string) {}
+        load() {
+          return Promise.resolve(this);
+        }
+      },
+    );
+    Object.defineProperty(document, 'fonts', {
+      configurable: true,
+      value: { add: (f: object) => added.add(f), delete: (f: object) => added.delete(f) },
+    });
+    try {
+      const bytes = fixture('LiberationSans-Regular.ttf');
+      fontLibrary.register([{ id: 'swap', label: 'Swap', regular: bytes }]);
+      await fontLibrary.load('swap', false, false);
+      expect(added.size).toBe(1);
+
+      // New files under the same id: the old face goes.
+      fontLibrary.register([{ id: 'swap', label: 'Swap', regular: bytes.slice() }]);
+      expect(added.size).toBe(0);
+
+      // Replaced again while loading: the stale load adds nothing; only the current one shows.
+      const stale = fontLibrary.load('swap', false, false);
+      fontLibrary.register([{ id: 'swap', label: 'Swap', regular: bytes.slice() }]);
+      expect(await stale).toBeNull();
+      expect(added.size).toBe(0);
+      await fontLibrary.load('swap', false, false);
+      expect(added.size).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+      delete (document as { fonts?: unknown }).fonts;
+    }
   });
 });

@@ -361,3 +361,19 @@ describe('content the editor cannot decode', () => {
     expect(await session.unresolvedContent({ 0: { removedRuns: [], frames: [] } })).toEqual([]);
   });
 });
+
+describe('page preview documents', () => {
+  it('frees the previous preview, and forgets the failed one, when a rebuild fails', async () => {
+    const doc = await PDFDocument.create();
+    doc.addPage([200, 200]);
+    const session = new EditSession(await doc.save());
+    const renders = (session as unknown as { renders: Map<number, { key: string; doc: Promise<{ destroy(): void }> }> }).renders;
+    let destroyed = 0;
+    // A preview of page 5 shown earlier; the file has one page, so rebuilding it fails.
+    renders.set(5, { key: 'earlier', doc: Promise.resolve({ destroy: () => void destroyed++ }) });
+    await expect(session.renderPage(5, { removedRuns: ['x'], frames: [] })).rejects.toThrow();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(destroyed).toBe(1);
+    expect(renders.has(5)).toBe(false);
+  });
+});

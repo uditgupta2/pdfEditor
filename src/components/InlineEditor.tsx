@@ -71,7 +71,7 @@ export function InlineEditor({ active, s, toCss, caretAt, maxRight }: InlineEdit
     el.innerHTML = paragraphsToHtml(frame.paragraphs, (font) => cssFontStack(frame, font));
     // Load the fonts the text is shown in, so it appears in them while editing.
     const choices = new Set([frameFont(frame), ...frame.paragraphs.flatMap((p) => p.spans.map((sp) => sp.font ?? ''))]);
-    for (const c of choices) if (c) preloadChoice(frame, c);
+    for (const c of choices) if (c) preloadChoice(c);
     try {
       document.execCommand('defaultParagraphSeparator', false, 'div');
       document.execCommand('styleWithCSS', false, 'true');
@@ -127,7 +127,7 @@ export function InlineEditor({ active, s, toCss, caretAt, maxRight }: InlineEdit
       setFont: (font) => {
         const el = textRef.current;
         if (!el) return;
-        preloadChoice(frameRef.current, font);
+        preloadChoice(font);
         el.focus({ preventScroll: true });
         const sel = window.getSelection();
         if (savedRange.current && sel) {

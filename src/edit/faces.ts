@@ -65,11 +65,12 @@ export function faceChain(frame: Pick<TextFrame, 'fonts' | 'family' | 'font'>, s
   if (c?.kind === 'pdf') {
     const f = pdfFace(frame, c.value, bold, italic);
     if (f) chain.push(f);
-    // Characters (or a style) the page font lacks: its stand-in, if the app provides one.
-    const familyName = frame.fonts?.[c.value]?.familyName;
-    const standIn = familyName ? fontLibrary.standInFor(familyName) : undefined;
-    const sf = standIn && libFace(standIn.id, bold, italic);
-    if (sf) chain.push(sf);
+    // Characters (or a style) the page font lacks: its stand-in, if the app
+    // provides one and it has loaded. Building the chain never downloads it;
+    // `facePicker` does, once a character actually needs it.
+    const standIn = standInId(frame, c.value);
+    const loaded = standIn ? fontLibrary.peek(standIn, bold, italic) : null;
+    if (loaded) chain.push({ kind: 'lib', id: loaded.id, face: loaded });
   } else if (c?.kind === 'lib') {
     const lf = libFace(c.value, bold, italic);
     if (lf) chain.push(lf);
@@ -88,6 +89,42 @@ export function faceHas(face: Face, ch: string): boolean {
 export function faceFor(chain: Face[], ch: string): Face {
   for (const f of chain) if (faceHas(f, ch)) return f;
   return chain[chain.length - 1]!;
+}
+
+/** Id of the library font standing in for page font `key`, if any. */
+function standInId(frame: Pick<TextFrame, 'fonts'>, key: string): string | undefined {
+  const familyName = frame.fonts?.[key]?.familyName;
+  return familyName ? fontLibrary.standInFor(familyName)?.id : undefined;
+}
+
+/**
+ * The stand-in face text in `style` would fall back to, when the page font
+ * lacks a character. Null when the span isn't in a page font or it has none.
+ */
+function standInFor(frame: Pick<TextFrame, 'fonts' | 'family' | 'font'>, style: SpanStyle): [string, boolean, boolean] | null {
+  const c = parseChoice(style.font ?? frameFont(frame));
+  const id = c?.kind === 'pdf' ? standInId(frame, c.value) : undefined;
+  return id && fontLibrary.hasVariant(id, !!style.bold, !!style.italic) ? [id, !!style.bold, !!style.italic] : null;
+}
+
+/**
+ * Picks the face for each character of text in `style`, like `faceFor`. The
+ * first time a character falls through to the standard font while the page
+ * font's stand-in hasn't loaded, it starts loading the stand-in; layout runs
+ * again when it arrives.
+ */
+export function facePicker(frame: Pick<TextFrame, 'fonts' | 'family' | 'font'>, style: SpanStyle): (ch: string) => Face {
+  const chain = faceChain(frame, style);
+  let pending = standInFor(frame, style);
+  if (pending && fontLibrary.peek(...pending)) pending = null;
+  return (ch) => {
+    const face = faceFor(chain, ch);
+    if (pending && face.kind === 'std') {
+      fontLibrary.face(...pending);
+      pending = null;
+    }
+    return face;
+  };
 }
 
 /** Advance width of `ch` in points at `size`. */
@@ -146,44 +183,71 @@ export function choiceLabel(frame: Pick<TextFrame, 'fonts' | 'family'>, choice: 
 export const STD_LABELS: Record<FamilyClass, string> = { sans: 'Helvetica', serif: 'Times', mono: 'Courier' };
 
 /**
- * Start loading the library font a choice shows (every style it has), or the
- * stand-in of a page font, without waiting. The inline editor shows text with
- * CSS alone, so nothing else would load the font before the edit is committed.
+ * Whether the frame's text is (partly) in one of the page's own fonts. Those
+ * frames are drawn into the rendered page, because the browser can't show an
+ * embedded PDF font; text in app fonts and the standard fonts shows correctly
+ * as HTML and stays out of it.
  */
-export function preloadChoice(frame: Pick<TextFrame, 'fonts'>, choice: FontChoice) {
+export function usesPageFont(frame: Pick<TextFrame, 'font' | 'paragraphs'>): boolean {
+  if (frame.font?.startsWith('pdf:')) return true;
+  return frame.paragraphs.some((p) => p.spans.some((s) => s.font?.startsWith('pdf:')));
+}
+
+/**
+ * Start loading a library font the user picked (every style it has), without
+ * waiting. The inline editor shows text with CSS alone, so nothing else would
+ * load the font before the edit is committed. Page fonts' stand-ins are left
+ * alone: they load only when a character needs one (see `facePicker`).
+ */
+export function preloadChoice(choice: FontChoice) {
   const c = parseChoice(choice);
-  let id: string | undefined;
-  if (c?.kind === 'lib') id = c.value;
-  else if (c?.kind === 'pdf') {
-    const name = frame.fonts?.[c.value]?.familyName;
-    id = name ? fontLibrary.standInFor(name)?.id : undefined;
-  }
-  if (!id) return;
+  if (c?.kind !== 'lib') return;
   for (const bold of [false, true]) for (const italic of [false, true]) {
-    if (fontLibrary.hasVariant(id, bold, italic)) void fontLibrary.load(id, bold, italic);
+    if (fontLibrary.hasVariant(c.value, bold, italic)) void fontLibrary.load(c.value, bold, italic);
   }
 }
 
 /**
- * Start loading every library face the frames may need, and wait for them,
- * so the export lays text out exactly as the screen does once fonts arrive.
+ * The library faces the frames' text is drawn in: the fonts spans ask for,
+ * and a page font's stand-in only when the page font lacks one of the span's
+ * characters. Never starts a download.
  */
-export async function loadFacesFor(frames: readonly TextFrame[]): Promise<void> {
+export function libFacesNeeded(frames: readonly TextFrame[]): [string, boolean, boolean][] {
   const wanted = new Map<string, [string, boolean, boolean]>();
-  const add = (id: string | undefined, bold: boolean, italic: boolean) => {
-    if (id) wanted.set(`${id}:${bold}:${italic}`, [id, bold, italic]);
-  };
+  const add = (face: [string, boolean, boolean]) => wanted.set(face.join(':'), face);
   for (const frame of frames) {
     for (const p of frame.paragraphs) {
       for (const s of p.spans) {
         const c = parseChoice(s.font ?? frameFont(frame));
-        if (c?.kind === 'lib') add(c.value, !!s.bold, !!s.italic);
-        if (c?.kind === 'pdf') {
-          const name = frame.fonts?.[c.value]?.familyName;
-          add(name ? fontLibrary.standInFor(name)?.id : undefined, !!s.bold, !!s.italic);
+        if (c?.kind === 'lib') {
+          if (fontLibrary.hasVariant(c.value, !!s.bold, !!s.italic)) add([c.value, !!s.bold, !!s.italic]);
+          continue;
         }
+        const standIn = standInFor(frame, s);
+        if (!standIn) continue;
+        const chain = faceChain(frame, s);
+        if (Array.from(s.text).some((ch) => faceFor(chain, ch).kind !== 'pdf')) add(standIn);
       }
     }
   }
-  await Promise.all([...wanted.values()].map(([id, b, i]) => fontLibrary.load(id, b, i)));
+  return [...wanted.values()];
+}
+
+/**
+ * Which of the faces the frames need have loaded, as a short string. It
+ * changes only when a face these frames use arrives, not when unrelated
+ * fonts load.
+ */
+export function libFacesState(frames: readonly TextFrame[]): string {
+  return libFacesNeeded(frames)
+    .map(([id, b, i]) => `${id}:${flags(b, i)}=${fontLibrary.peek(id, b, i) ? 1 : 0}`)
+    .join(',');
+}
+
+/**
+ * Load every library face the frames need, and wait for them, so the export
+ * lays text out exactly as the screen does once fonts arrive.
+ */
+export async function loadFacesFor(frames: readonly TextFrame[]): Promise<void> {
+  await Promise.all(libFacesNeeded(frames).map(([id, b, i]) => fontLibrary.load(id, b, i)));
 }

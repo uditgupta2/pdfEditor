@@ -2,8 +2,9 @@ import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import type { PDFDocument } from 'pdf-lib';
 import { assetUrls, getPdfjs, type PdfjsOptions } from '../render/pdfjs';
 import type { PageAnalysis } from './extract';
+import { libFacesState, usesPageFont } from './faces';
 import { fontLibrary } from './fontLibrary';
-import type { DocumentEdits, PageEdits } from './model';
+import type { DocumentEdits, PageEdits, PdfFont } from './model';
 
 type Engine = typeof import('./engine');
 
@@ -32,22 +33,51 @@ export function removalKey(removed: string[] | undefined) {
   return removed && removed.length ? hash([...removed].sort().join('|')) : 'original';
 }
 
-const renderKeys = new WeakMap<PageEdits, { fonts: number; key: string }>();
+/** A page font's glyph table never changes once analysed, so its identity stands for it. */
+const fontIdentity = new WeakMap<PdfFont, number>();
+let nextFontId = 0;
+function fontIds(fonts: Record<string, PdfFont> | undefined) {
+  if (!fonts) return undefined;
+  return Object.keys(fonts)
+    .sort()
+    .map((k) => {
+      let id = fontIdentity.get(fonts[k]!);
+      if (id === undefined) fontIdentity.set(fonts[k]!, (id = nextFontId++));
+      return `${k}#${id}`;
+    });
+}
+
+const renderKeys = new WeakMap<PageEdits, { base: string; version: number; key: string }>();
 
 /**
  * Identifies how a page should look with its edits: which original text is
- * removed and which frames are drawn. `'original'` when there is nothing to change.
+ * removed, which frames are drawn, and which of the app fonts they are drawn
+ * in have loaded. `'original'` when there is nothing to change. A font that
+ * the page's text doesn't use loading elsewhere leaves the key (and the
+ * rendered page) as it is.
  */
 export function pageRenderKey(edits: PageEdits | undefined): string {
-  if (!edits || (!edits.removedRuns.length && !edits.frames.length)) return 'original';
-  // Fonts arriving can change how frames are drawn.
-  const fonts = edits.frames.length ? fontLibrary.getVersion() : 0;
+  if (!edits) return 'original';
+  const version = fontLibrary.getVersion();
   const cached = renderKeys.get(edits);
-  if (cached?.fonts === fonts) return cached.key;
-  // The screen-only cover colour doesn't change the rendered page.
-  const frames = JSON.stringify(edits.frames.map(({ cover: _cover, ...f }) => f));
-  const key = `${removalKey(edits.removedRuns)}-${hash(frames)}-${fonts}`;
-  renderKeys.set(edits, { fonts, key });
+  if (cached?.version === version) return cached.key;
+  // Only frames in the page's own fonts are drawn into the rendered page (see `buildEditedPage`).
+  const drawn = edits.frames.filter(usesPageFont);
+  if (!edits.removedRuns.length && !drawn.length) {
+    renderKeys.set(edits, { base: 'original', version, key: 'original' });
+    return 'original';
+  }
+  // Edits are immutable, so the frames are serialised once per edits object.
+  // The screen-only cover colour doesn't change the rendered page, and page
+  // fonts are named by identity rather than serialised with their glyph tables.
+  const base =
+    cached?.base ??
+    `${removalKey(edits.removedRuns)}-${hash(
+      JSON.stringify(drawn.map(({ cover: _cover, fonts, ...f }) => ({ ...f, fonts: fontIds(fonts) }))),
+    )}`;
+  const fonts = drawn.length ? libFacesState(drawn) : '';
+  const key = fonts ? `${base}-${hash(fonts)}` : base;
+  renderKeys.set(edits, { base, version, key });
   return key;
 }
 
@@ -122,10 +152,19 @@ export class EditSession {
       const bytes = await engine.buildEditedPage(doc, pageIndex, analysis, edits);
       return pdfjs.getDocument({ data: bytes, ...assetUrls(pdfjs, this.options.assetsBaseUrl) }).promise;
     })();
-    this.renders.set(pageIndex, { key, doc: docP });
-    // Free the previous variant once the new one is ready.
-    if (existing) void docP.then(() => existing.doc.then((d) => d.destroy()), () => undefined);
-    if (this.destroyed) void docP.then((d) => d.destroy());
+    const entry = { key, doc: docP };
+    this.renders.set(pageIndex, entry);
+    // Free the previous variant once the new one has settled. If the new one
+    // failed, the previous one is no longer reachable either, so free it then too.
+    if (existing) {
+      const release = () => void existing.doc.then((d) => d.destroy(), () => undefined);
+      docP.then(release, release);
+    }
+    // A failed build must not stay cached under its key, or it would never be retried.
+    docP.catch(() => {
+      if (this.renders.get(pageIndex) === entry) this.renders.delete(pageIndex);
+    });
+    if (this.destroyed) void docP.then((d) => d.destroy(), () => undefined);
     return (await docP).getPage(1);
   }
 
