@@ -12,3 +12,4 @@ sandbox
 # Playwright
 test-results
 playwright-report
+__pycache__/
