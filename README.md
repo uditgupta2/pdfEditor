@@ -51,6 +51,17 @@ the rest of the page. Now it keeps the document's look.
   Arial/Helvetica, Tinos for Times New Roman, Cousine for Courier New).
   Fonts are embedded as subsets on export, and their licence flags
   (`OS/2.fsType`) are respected.
+
+  ```tsx
+  <PdfEditor
+    fonts={[
+      { id: 'inter', label: 'Inter', regular: '/fonts/Inter-Regular.ttf', bold: '/fonts/Inter-Bold.ttf' },
+      ...standInFonts('/fonts/'),
+    ]}
+  />
+  ```
+
+  More setups are in [Providing fonts](#providing-fonts).
 - **What you see is what you export.** After each edit the page is re-rendered
   with the new text drawn in its real font.
 - **Faster and lighter.** Stand-in fonts download only when a character needs
@@ -357,6 +368,55 @@ import { PdfEditor, standInFonts } from 'react-pdf-editor-kit';
   ]}
 />
 ```
+
+Common setups:
+
+```tsx
+import { PdfEditor, type EditorFont } from 'react-pdf-editor-kit';
+
+// 1. Your brand font with all four styles, offered in the picker. `family` is the
+//    standard font used for characters the font doesn't have.
+const brand: EditorFont = {
+  id: 'acme-serif',
+  label: 'Acme Serif',
+  family: 'serif',
+  regular: '/fonts/AcmeSerif-Regular.ttf',
+  bold: '/fonts/AcmeSerif-Bold.ttf',
+  italic: '/fonts/AcmeSerif-Italic.ttf',
+  boldItalic: '/fonts/AcmeSerif-BoldItalic.ttf',
+};
+
+// 2. A stand-in only: your documents use "Acme Sans", embedded as a subset.
+//    Characters the subset lacks are written in your full copy of the font
+//    instead of Helvetica. Hidden from the picker.
+const acmeSans: EditorFont = {
+  id: 'acme-sans',
+  label: 'Acme Sans',
+  regular: '/fonts/AcmeSans-Regular.ttf',
+  bold: '/fonts/AcmeSans-Bold.ttf',
+  replaces: ['Acme Sans'], // the PDF font's family name, without "ABCDEF+" or "-Bold"
+  hidden: true,
+};
+
+// 3. A font the user picks from their computer: pass the bytes.
+async function fontFromFile(file: File): Promise<EditorFont> {
+  return {
+    id: `user:${file.name}`,
+    label: file.name.replace(/\.(ttf|otf)$/i, ''),
+    regular: new Uint8Array(await file.arrayBuffer()),
+  };
+}
+
+function App({ userFonts }: { userFonts: EditorFont[] }) {
+  // An inline array is fine: fonts already registered with the same files are skipped.
+  return <PdfEditor fonts={[brand, acmeSans, ...userFonts]} />;
+}
+```
+
+Fonts from URLs are fetched only when first used, so a long list costs nothing
+up front. The fonts from `standInFonts()` also appear in the picker. To use them
+only as stand-ins, map them with `hidden: true`:
+`standInFonts('/fonts/').map((f) => ({ ...f, hidden: true }))`.
 
 | `EditorFont` field | Type | Description |
 | --- | --- | --- |
