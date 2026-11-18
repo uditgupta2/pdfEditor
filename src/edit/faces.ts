@@ -146,6 +146,25 @@ export function choiceLabel(frame: Pick<TextFrame, 'fonts' | 'family'>, choice: 
 export const STD_LABELS: Record<FamilyClass, string> = { sans: 'Helvetica', serif: 'Times', mono: 'Courier' };
 
 /**
+ * Start loading the library font a choice shows (every style it has), or the
+ * stand-in of a page font, without waiting. The inline editor shows text with
+ * CSS alone, so nothing else would load the font before the edit is committed.
+ */
+export function preloadChoice(frame: Pick<TextFrame, 'fonts'>, choice: FontChoice) {
+  const c = parseChoice(choice);
+  let id: string | undefined;
+  if (c?.kind === 'lib') id = c.value;
+  else if (c?.kind === 'pdf') {
+    const name = frame.fonts?.[c.value]?.familyName;
+    id = name ? fontLibrary.standInFor(name)?.id : undefined;
+  }
+  if (!id) return;
+  for (const bold of [false, true]) for (const italic of [false, true]) {
+    if (fontLibrary.hasVariant(id, bold, italic)) void fontLibrary.load(id, bold, italic);
+  }
+}
+
+/**
  * Start loading every library face the frames may need, and wait for them,
  * so the export lays text out exactly as the screen does once fonts arrive.
  */

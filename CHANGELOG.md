@@ -24,6 +24,11 @@ releases may contain breaking changes.
 - Edited pages are re-rendered with their new text drawn in, so the screen
   shows the real fonts after each edit.
 
+### Fixed
+
+- Picking an app font while editing now shows the text in that font right
+  away; before, the font file only loaded once the edit was committed.
+
 ### Changed
 
 - Spans and frames carry their font (`Span.font`, `TextFrame.font`,
