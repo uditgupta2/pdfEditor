@@ -15,6 +15,10 @@ uploaded anywhere.
 - **Real text editing.** Click a paragraph and type. The original text is
   removed from the PDF content stream, and the new text is written as real,
   searchable PDF text, not a white box with text on top.
+- **Keeps the document's fonts.** Edited text is written in the font already
+  in the PDF, so it looks and measures like the original. Add your own fonts
+  to the font picker, or self-hosted stand-ins (Carlito for Calibri, Arimo for
+  Arial, …) for characters a document's font doesn't have.
 - **Opens files several ways.** File picker, drag and drop, Ctrl/⌘+O, or a
   `file` prop (`File`, `Blob`, `ArrayBuffer`, `Uint8Array` or URL).
 - **Responsive.** The layout follows the editor's own width, not the
@@ -251,19 +255,30 @@ Edited text keeps the **document's own font**: the new text is written with the
 font already in the PDF, so it looks and measures exactly like the original.
 
 Most PDFs embed fonts as subsets, which only contain the characters the
-document uses. A character the subset lacks (say, a "Q" in a document that never
+document uses. For TrueType fonts the editor reads the embedded font file to see
+which characters it really has, so anything the document uses on *any* page is
+available. A character the subset lacks (say, a "Q" in a document that never
 used one) is set in a fallback, character by character:
 
 1. a bold/italic face of the same family on the page, for bold or italic text;
-2. the font's **stand-in** from `fonts`, if you provide one (see below);
+2. the font's **stand-in** from `fonts`, if you provide one (see below). It is
+   downloaded only when a character needs it;
 3. Helvetica, Times or Courier, whichever is closest.
 
-While you type, the screen shows the original font only if it is installed on
-the computer (otherwise a similar font). Once you confirm, the page is
-re-rendered from the PDF itself, so you see the real result.
+While you type, fonts you provide (and stand-ins) show in their real font as
+soon as you pick them. The document's own font shows only if it is installed on
+the computer (otherwise a similar font); once you confirm, that text is drawn
+into the page by the PDF renderer, so you see the real result. Text in fonts
+the browser can show (yours, stand-ins, and Helvetica/Times/Courier through
+their metric-compatible system fonts) stays HTML, so editing it never re-renders
+the page.
 
 The **font picker** lists the document's fonts, the fonts you provide, and
-Helvetica, Times and Courier.
+Helvetica, Times and Courier. It applies to the selected text, or to the whole
+box when nothing is selected. Hide it with `toolbarOptions` (leave out
+`'fontFamily'`).
+
+#### Providing fonts
 
 ```tsx
 import { PdfEditor, standInFonts } from 'react-pdf-editor-kit';
@@ -279,18 +294,36 @@ import { PdfEditor, standInFonts } from 'react-pdf-editor-kit';
 />
 ```
 
-`EditorFont` fields: `id`, `label`, `regular` (URL or bytes), optional `bold`,
-`italic`, `boldItalic`, `family` (`'sans' | 'serif' | 'mono'`, the fallback),
-`replaces` (PDF family names it stands in for, e.g. `['Calibri']`) and `hidden`
-(stand-in only, not in the picker). Font files load on first use and are
-embedded as subsets on export. TrueType (`.ttf`) works best. The font's own
-embedding flags (`OS/2.fsType`) are respected: a font marked as not embeddable
-(Restricted License, or bitmap-only) is not loaded, and its text uses the
-fallback standard font; a font marked "no subsetting" is embedded whole.
+| `EditorFont` field | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Unique id. Fonts are shared by every editor on the page, by id |
+| `label` | `string` | Name shown in the font picker |
+| `regular` | `string \| Uint8Array \| ArrayBuffer` | Font file: a URL, or its bytes |
+| `bold`, `italic`, `boldItalic` | same | Optional styles. Without one, that style falls back to the standard font |
+| `family` | `'sans' \| 'serif' \| 'mono'` | Standard font for characters this font lacks. Default `'sans'` |
+| `replaces` | `string[]` | PDF font families it stands in for, e.g. `['Calibri']` |
+| `hidden` | `boolean` | Use only as a stand-in; leave out of the picker |
+
+`standInFonts(baseUrl)` returns the five metric-compatible stand-ins (SIL OFL /
+Apache licensed). Download them and serve them from your own folder, named
+`<Name>-Regular.ttf`, `<Name>-Bold.ttf`, `<Name>-Italic.ttf` and
+`<Name>-BoldItalic.ttf`, where `<Name>` is `Carlito`, `Caladea`, `Arimo`,
+`Tinos` or `Cousine`. Nothing is fetched from a CDN.
+
+Font files load on first use. The font parser (fontkit) is downloaded only
+when an app font is first used. On export, fonts are embedded as subsets with
+ligatures and kerning off, so the PDF matches the screen. TrueType (`.ttf`)
+works best; some CFF-based `.otf` files don't subset cleanly.
+
+Font licences are respected through the font's own embedding flags
+(`OS/2.fsType`): a font marked as not embeddable (Restricted License, or
+bitmap-only) is not loaded, and its text uses the fallback standard font; a
+font marked "no subsetting" is embedded whole. You are still responsible for
+having the right to use the fonts you provide.
 
 ### Current limitations
 
-- **Fonts:** characters outside Western European (WinAnsi) can only be written in the document's fonts or fonts you provide. Otherwise they are substituted on export, and you'll see a notice. A document font that the PDF doesn't encode simply (non-Identity CID encodings) falls back to the closest standard font.
+- **Fonts:** characters outside Western European (WinAnsi) can only be written in the document's fonts or fonts you provide. Otherwise they are substituted on export, and you'll see a notice. A document font that the PDF doesn't encode simply (non-Identity CID encodings) falls back to the closest standard font. For subset fonts in CFF or Type 1 format, only the characters used on the current page are known to be available; others use the fallback.
 - **Not editable yet:**
   - text inside form XObjects
   - Type3 fonts
@@ -479,6 +512,10 @@ from `node_modules/pdfjs-dist/` to your public folder and pass `assetsBaseUrl`
 Current versions of Chrome, Edge, Firefox and Safari (desktop and mobile). The
 layout uses CSS container queries, so the minimum is about Chrome/Edge 105,
 Safari 16 and Firefox 110. pdf.js 5 has similar requirements.
+
+Editing and fonts are covered by end-to-end tests in Chromium and Firefox (see
+[End-to-end tests](#end-to-end-tests)). Safari (WebKit) is set up in the test
+suite but isn't part of the regular runs yet.
 
 ## Development
 
